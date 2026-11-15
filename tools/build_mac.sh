@@ -3,7 +3,7 @@
 # UNTESTED: written on Windows, run it on a Mac and report back. Needs Python 3.10+ (python.org or Homebrew).
 #
 #   python3 -m venv .venv
-#   .venv/bin/pip install ufbt pywebview pyserial pyinstaller pillow heatshrink2 imageio-ffmpeg
+#   .venv/bin/pip install ufbt pywebview pyserial pyinstaller pillow heatshrink2 imageio-ffmpeg pmtiles
 #   bash tools/build_mac.sh
 #
 # Data (SDKs, built apps, library, settings, backups) goes to ~/Library/Application Support/Flipper Workbench.
@@ -25,10 +25,14 @@ cp assets/icon.png ui/icon.png
   --hidden-import device \
   --hidden-import catalog \
   --hidden-import capture \
+  --hidden-import health \
   --hidden-import firmware \
   --hidden-import irdb \
   --hidden-import music \
   --hidden-import anim \
+  --hidden-import wardrive \
+  --hidden-import mapextract \
+  --collect-submodules pmtiles \
   --hidden-import assetpacks \
   --hidden-import sync \
   --hidden-import devkit \

@@ -58,6 +58,9 @@ The [user guide](docs/GUIDE.md) explains every feature step by step, with screen
 
 - **Knows your Flipper**: plug it in and the app reads its firmware and API version, selects the
   matching SDK, and warns you before building something that won't run on it.
+- **Dashboard**: firmware, hardware, battery (and time to full while charging), memory, SD card, apps, last
+  backup and whether a newer firmware build is out, on one page, with a note when something needs attention.
+  Battery over time shows how full it was each time you plugged it in.
 - **Install straight to it**: *Install to SD* copies the `.fap` into `apps/<Category>/`, or
   *Install & open* also launches it.
 - **Firmware updates**: update to the latest Official, Momentum or Unleashed (release or dev) in
@@ -115,6 +118,8 @@ The [user guide](docs/GUIDE.md) explains every feature step by step, with screen
 - **Health check**: free memory with a live graph and the lowest point since the last restart, battery
   and SD card, plus how much memory each asset pack needs, with one click to shrink old uncompressed
   animations. Handy when your Flipper says it's out of memory.
+- **Signal viewer**: zoom into the timing of a Sub-GHz recording or key, or any IR button, like a logic
+  analyzer: pulse lengths, a histogram, the base unit, bursts and repeats, and a guess at the bits.
 - **IR remote builder**: one remote from buttons of any remote (IR database, your Flipper, learned from a
   real remote or typed in), each tested before you save it.
 - **BadUSB scripts**: edit scripts with highlighting and a checker, and pick the keyboard layout.
@@ -157,6 +162,29 @@ The [user guide](docs/GUIDE.md) explains every feature step by step, with screen
 - **Bluetooth**: mirror and control your Flipper without a cable. Click the **Bluetooth** button under
   the screen; the first time, type the PIN your Flipper shows (right in Workbench). After that it
   reconnects in a couple of seconds.
+
+### Wardrive
+
+- **Your wardrive logs on a real map, offline**: import logs from the Flipper's SD card (Marauder and other
+  wardriving apps save them there) or from your PC: WiGLE CSV, Kismet, GPX, KML and NMEA. Or drop them on
+  the map. No WiGLE account, no upload: everything stays in a local database on your computer.
+- **See and analyse**: every network on an OpenStreetMap map, colored by security, signal or type, as dots,
+  groups or a heatmap, with your route. Click one to see each place it was seen, the strongest signal, its
+  likely spot and maker. Stats for security, bands, channels, makers and common names double as filters;
+  search by name, MAC or maker; replay a drive; compare two drives to see what's new.
+- **Captured handshakes**: open a `.pcap` / `.pcapng` and each WPA handshake or PMKID inside it is filed under
+  the network it belongs to, so a big file full of handshakes splits itself one per access point. The Handshakes
+  panel shows how complete each is (and whether a PMKID was caught), flags those networks on the map, and saves
+  any one back out as its own `.pcap`. It only reads and sorts the frames; nothing is cracked or sent anywhere.
+- **Offline maps**: a world map is built in; download street detail for the area your logs cover once
+  and it works offline from then on (only the map area is requested). Or use your own `.pmtiles` file.
+- **What changed**: compare a drive with the ones before it: new, gone, moved (with arrows), renamed, and
+  networks whose security changed.
+- **Points of interest**: open WiFi, weak security, default router names, hidden networks, printers and
+  cameras, phone hotspots. Mark your own devices as yours.
+- **Privacy and export**: a home zone leaves out everything near your home in exports and, if you want, on
+  the map. Export to WiGLE CSV (so uploading stays your choice), KML for Google Earth, GeoJSON or CSV. Or a one-page **report** with a
+  map to keep or share.
 
 ### Little things
 
@@ -206,7 +234,7 @@ Needs Windows and Python 3.10+. Double-click `Flipper Workbench.bat`, or:
 
 ```
 python -m venv .venv
-.venv\Scripts\pip install ufbt pywebview pyserial pillow heatshrink2 imageio-ffmpeg
+.venv\Scripts\pip install ufbt pywebview pyserial pillow heatshrink2 imageio-ffmpeg pmtiles
 .venv\Scripts\python flipper_workbench.py                                                    # GUI
 .venv\Scripts\python flipper_workbench.py <github-url-or-folder> --fw momentum-dev [--send]  # CLI
 ```
@@ -237,7 +265,7 @@ To build one on a Mac:
 
 ```
 python3 -m venv .venv
-.venv/bin/pip install ufbt pywebview pyserial pyinstaller pillow heatshrink2 imageio-ffmpeg
+.venv/bin/pip install ufbt pywebview pyserial pyinstaller pillow heatshrink2 imageio-ffmpeg pmtiles
 bash tools/build_mac.sh            # -> dist/Flipper Workbench.app
 ```
 
@@ -270,6 +298,12 @@ caches it for a week.
 - **App catalog index**: Flipper's official Apps Catalog; each app belongs to its author.
 - **Video conversion**: [FFmpeg](https://ffmpeg.org), GPL, shipped through
   [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg).
+- **Maps**: map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), cut from
+  the [Protomaps](https://protomaps.com) daily build; drawn with [Leaflet](https://leafletjs.com) (BSD-2),
+  [protomaps-leaflet](https://github.com/protomaps/protomaps-leaflet) (BSD-3),
+  [Leaflet.markercluster](https://github.com/Leaflet/Leaflet.markercluster) (MIT) and
+  [Leaflet.heat](https://github.com/Leaflet/Leaflet.heat) (BSD-2); `pmtiles` (BSD-3) reads and writes the map files.
+- **Device makers**: the IEEE MA-L registry of MAC address prefixes.
 
 Flipper Workbench is an unofficial community tool and is not affiliated with or endorsed by Flipper Devices Inc.
 "Flipper Zero" is a trademark of Flipper Devices Inc.

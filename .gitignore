@@ -16,3 +16,11 @@ assets/discord/
 .vscode/
 promo/
 my_packs/
+wardrive/
+dashboard/
+# app data when run from source (never publish)
+backups/
+profiles/
+projects/
+recordings/
+screenshots/

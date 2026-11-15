@@ -718,6 +718,7 @@ class Api:
                 time.sleep(0.6)  # let the USB serial settle after plug-in
                 try:
                     info = device.read_info(p["port"], fb.sdk_dirs())
+                    self._device_raw = info
                     self._device = {"connected": True, **device.summary(p["port"], p["name"], info)}
                 except Exception as e:  # noqa: BLE001
                     self._device = {"connected": True, "port": p["port"], "name": p["name"] or "Flipper",
@@ -1985,6 +1986,44 @@ class Api:
         res["size"] = len(data)
         return res
 
+    def _sig_parse_bytes(self, name, data):
+        import capture
+        if len(data) > 8 * 1024 * 1024:
+            return {"error": "That file is bigger than 8 MB."}
+        if not capture.is_text(data):
+            return {"error": "That isn't a Flipper .sub or .ir file (it's binary)."}
+        kind = capture.kind_of(name)
+        if kind not in ("subghz", "ir"):
+            return {"error": "Open a Sub-GHz (.sub) or infrared (.ir) file."}
+        res = capture.parse(name, data.decode("utf-8", "replace"), name)
+        res["name"] = name
+        res.pop("text", None)
+        return res
+
+    def sig_open_pc(self):
+        """Pick a .sub or .ir file on this computer for the signal viewer."""
+        import webview
+        types = ("Flipper signals (*.sub;*.ir)", "All files (*.*)")
+        try:
+            res = self._window.create_file_dialog(webview.FileDialog.OPEN, file_types=types)
+        except AttributeError:
+            res = self._window.create_file_dialog(webview.OPEN_DIALOG, file_types=types)
+        if not res:
+            return {"cancelled": True}
+        p = Path(res[0] if isinstance(res, (list, tuple)) else res)
+        try:
+            return self._sig_parse_bytes(p.name, p.read_bytes())
+        except OSError as e:
+            return {"error": f"Couldn't read it: {e}"}
+
+    def sig_parse(self, name, b64):
+        """A .sub or .ir file dropped on the signal viewer."""
+        import base64
+        try:
+            return self._sig_parse_bytes(name, base64.b64decode(b64))
+        except ValueError:
+            return {"error": "Couldn't read that file."}
+
     def files_save(self, path, text):
         """Save edited text back to the SD card (the editor asks first)."""
         import device
@@ -2907,9 +2946,446 @@ class Api:
         return {"ok": True, "version": info["version"]}
 
     def start_background(self):
-        for target in (self._device_monitor, self._watcher, self._update_check):
+        for target in (self._device_monitor, self._watcher, self._update_check, self._battery_sampler):
             threading.Thread(target=target, daemon=True).start()
         return True
+
+    # ------------------------------------------------ dashboard: one page with the Flipper's state
+    DASH_FILE = fb.ROOT / "dashboard" / "battery.json"
+    HIST_DAYS = 30
+    SAMPLE_EVERY = 600          # a battery reading every 10 minutes while plugged in (plus one right after plugging in)
+    _hist_lock = threading.Lock()
+    COLORS = {"1": "Black", "2": "White", "3": "Transparent"}
+
+    def _hist_load(self):
+        try:
+            return json.loads(self.DASH_FILE.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _hist_add(self, name, pw, plug=False):
+        """Remember one battery reading: [time, level %, state (0 draining, 1 charging, 2 full), mV, health %, plug-in?]."""
+        if pw.get("level") is None:
+            return
+        state = {"charging": 1, "charged": 2}.get(pw.get("state") or "", 0)
+        now = int(time.time())
+        row = [now, pw["level"], state, pw.get("voltage"), pw.get("health"), 1 if plug else 0]
+        with self._hist_lock:
+            hist = self._hist_load()
+            rows = hist.get(name, [])
+            if rows and now - rows[-1][0] < 90 and not plug and not rows[-1][5]:
+                rows[-1] = row                 # readings this close together: keep the newest
+            else:
+                rows.append(row)
+            cutoff = now - self.HIST_DAYS * 86400
+            hist[name] = [r for r in rows if r[0] >= cutoff][-8000:]
+            self.DASH_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.DASH_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(hist, separators=(",", ":")), encoding="utf-8")
+            tmp.replace(self.DASH_FILE)
+
+    def _battery_sampler(self):
+        """Background battery readings while a Flipper is plugged in. Never during a job; a reading is one
+        short `info power` (the screen mirror pauses for a moment)."""
+        import device
+        import health
+        seen_port, last = None, 0.0
+        while True:
+            time.sleep(15)
+            dev = self._device
+            if not dev.get("connected"):
+                seen_port = None
+                continue
+            if dev.get("error") or self._job:
+                continue
+            plug = dev.get("port") != seen_port
+            if not plug and time.time() - last < self.SAMPLE_EVERY:
+                continue
+            try:
+                pw = health.power(device.device_power(self._port(), fb.sdk_dirs()))
+                self._hist_add(dev.get("name") or "Flipper", pw, plug=plug)
+                seen_port, last = dev.get("port"), time.time()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _hw(self):
+        """Hardware facts worth showing (no serial numbers or Bluetooth address)."""
+        r = getattr(self, "_device_raw", None) or {}
+        g = r.get
+        radio = ".".join(x for x in (g("radio_stack_major"), g("radio_stack_minor")) if x)
+        return {k: v for k, v in {
+            "model": g("hardware_model"), "hw_version": g("hardware_ver"), "region": g("hardware_region_provisioned"),
+            "color": self.COLORS.get(g("hardware_color") or "", None), "build_date": g("firmware_build_date"),
+            "branch": g("firmware_branch"), "origin": g("firmware_origin_git"), "radio": radio or None,
+            "protobuf": ".".join(x for x in (g("protobuf_version_major"), g("protobuf_version_minor")) if x) or None,
+            "dirty": g("firmware_commit_dirty") == "true",
+        }.items() if v not in (None, "")}
+
+    def dash_snapshot(self):
+        """Everything the dashboard shows that needs the Flipper: one short CLI visit (battery, memory, SD,
+        uptime, open app). Also returns local facts: backups, library, battery history."""
+        import health
+        dev = dict(self._device)
+        live = dev.get("connected") and not dev.get("error")
+        out = {"device": dev, "hw": self._hw() if live else {}, "local": self._dash_local(dev)}
+        if not live:
+            return out
+        out["history"] = self._hist_load().get(dev.get("name") or "Flipper", [])
+        if self._job:
+            out["busy"] = True
+            return out
+        snap = self.health_snapshot()
+        if snap.get("error"):
+            out["error"] = snap["error"]
+            return out
+        out["health"] = snap
+        try:
+            self._hist_add(dev.get("name") or "Flipper", snap.get("power") or {})
+        except Exception:  # noqa: BLE001
+            pass
+        out["history"] = self._hist_load().get(dev.get("name") or "Flipper", [])
+        return out
+
+    def _dash_local(self, dev):
+        name = dev.get("name") or "Flipper"
+        label = re.sub(r"[^\w\-]+", "", name) or "Flipper"
+        mine = sorted((p for p in self.BACKUP_DIR.glob(f"{label}_*.zip")), key=lambda p: -p.stat().st_mtime) if self.BACKUP_DIR.exists() else []
+        try:
+            lib = len(fb.load_library())
+        except Exception:  # noqa: BLE001
+            lib = None
+        return {"backups": len(mine), "last_backup": int(mine[0].stat().st_mtime) if mine else None, "library": lib}
+
+    def dash_fw(self):
+        """Is a newer build of the firmware this Flipper runs out? Checked online, cached for an hour."""
+        import firmware
+        dev = self._device
+        if not dev.get("fw"):
+            return {"known": False}
+        cache = getattr(self, "_dash_fw_cache", None)
+        if not cache or time.time() - cache[0] > 3600:
+            try:
+                cache = (time.time(), firmware.available())
+                self._dash_fw_cache = cache
+            except Exception as e:  # noqa: BLE001
+                return {"error": f"Couldn't check for updates: {e}"}
+        t = cache[1]["targets"].get(dev["fw"])
+        if not t:
+            return {"known": True, "available": False}
+        return {"known": True, "latest": t.get("version"), "age": firmware.describe_age(t.get("timestamp")),
+                "current": firmware.matches(t, dev), "channel": t.get("channel"), "family": t.get("family")}
+
+    # ------------------------------------------------ wardrive: offline map of wardriving logs
+    def _wd(self):
+        import wardrive
+        if getattr(self, "_wd_store", None) is None:
+            self._wd_store = wardrive.Store(fb.ROOT / "wardrive")
+        return self._wd_store
+
+    def _wd_maps_dir(self):
+        d = fb.ROOT / "wardrive" / "maps"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _wd_server(self):
+        import mapextract
+        if getattr(self, "_wd_srv", None) is None:
+            self._wd_srv = mapextract.MapServer([fb.UI_DIR / "vendor" / "map", self._wd_maps_dir()])
+        return self._wd_srv
+
+    def wd_maps(self):
+        import mapextract
+        srv = self._wd_server()
+        out = []
+        world = fb.UI_DIR / "vendor" / "map" / "world.pmtiles"
+        if world.is_file():
+            out.append({"id": "world", "name": "World (built in)", "builtin": True, "url": srv.url("world"),
+                        "bounds": [-180, -85, 180, 85], "minzoom": 0, "maxzoom": 5, "size": world.stat().st_size})
+        for p in sorted(self._wd_maps_dir().glob("*.pmtiles")):
+            try:
+                i = mapextract.info(p)
+            except Exception:  # noqa: BLE001
+                continue
+            out.append({"id": p.stem, "name": i["name"] or p.stem, "builtin": False, "url": srv.url(p.stem), "bounds": i["bounds"],
+                        "minzoom": i["minzoom"], "maxzoom": i["maxzoom"], "size": p.stat().st_size})
+        return out
+
+    def wd_init(self):
+        try:
+            st = self._wd()
+            return {"summary": st.summary(), "maps": self.wd_maps(), "home": st.get("home"), "bounds": st.bounds(),
+                    "prefs": st.get("prefs", {}), "watch": st.get("watch", [])}
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"Couldn't open the wardrive database: {e}"}
+
+    def wd_data(self):
+        st = self._wd()
+        return {"nets": st.networks(), "tracks": st.tracks(), "summary": st.summary(), "bounds": st.bounds(),
+                "shakes": st.handshakes()}
+
+    def wd_net(self, nid):
+        return self._wd().network(int(nid)) or {"error": "Not found"}
+
+    def wd_drive(self, did):
+        return self._wd().drive(int(did))
+
+    def wd_set(self, key, value):
+        if key not in ("home", "prefs", "watch"):
+            return {"error": "bad key"}
+        self._wd().set(key, value)
+        return {"ok": True}
+
+    def wd_changes(self, did):
+        try:
+            return self._wd().changes(int(did))
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"Couldn't compare drives: {e}"}
+
+    def wd_report_save(self, html, name):
+        """Save a drive report (one self-contained HTML page) and open it in the browser."""
+        import webbrowser
+        import webview
+        fname = (re.sub(r"[^\w\- ]+", "", name or "").strip() or "wardrive") + " report.html"
+        try:
+            res = self._window.create_file_dialog(webview.FileDialog.SAVE, save_filename=fname, file_types=("Web page (*.html)", "All files (*.*)"))
+        except AttributeError:
+            res = self._window.create_file_dialog(webview.SAVE_DIALOG, save_filename=fname)
+        if not res:
+            return {"cancelled": True}
+        out = Path(res[0] if isinstance(res, (list, tuple)) else res)
+        if out.suffix.lower() not in (".html", ".htm"):
+            out = out.with_suffix(".html")
+        out.write_text(html, encoding="utf-8")
+        webbrowser.open(out.resolve().as_uri())
+        return {"ok": True, "path": str(out)}
+
+    def _wd_import_many(self, items):
+        """items: [(name, bytes, source)] -> list of results, one per file."""
+        import wardrive
+        out = []
+        for i, (name, data, source) in enumerate(items):
+            self._emit("wd", ev="import", name=name, done=i, total=len(items))
+            try:
+                r = self._wd().import_bytes(name, data, source)
+            except wardrive.WardriveError as e:
+                r = {"error": str(e)}
+            except Exception as e:  # noqa: BLE001
+                r = {"error": f"Couldn't read it: {e}"}
+            r["file"] = name
+            out.append(r)
+        return out
+
+    @staticmethod
+    def _wd_gunzip(name, data):
+        if name.lower().endswith(".gz"):
+            import gzip
+            try:
+                return name[:-3], gzip.decompress(data)
+            except OSError:
+                pass
+        return name, data
+
+    def wd_pick_import(self):
+        import webview
+        types = ("Wardrive logs and captures (*.csv;*.log;*.txt;*.kml;*.gpx;*.nmea;*.kismet;*.wiglecsv;*.pcap;*.pcapng;*.cap;*.gz)", "All files (*.*)")
+        try:
+            res = self._window.create_file_dialog(webview.FileDialog.OPEN, allow_multiple=True, file_types=types)
+        except AttributeError:
+            res = self._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=True, file_types=types)
+        if not res:
+            return {"cancelled": True}
+        items = []
+        for p in (res if isinstance(res, (list, tuple)) else [res]):
+            p = Path(p)
+            try:
+                items.append((*self._wd_gunzip(p.name, p.read_bytes()), "This PC"))
+            except OSError:
+                items.append((p.name, b"", "This PC"))
+        return {"results": self._wd_import_many(items)}
+
+    def wd_import_data(self, name, b64):
+        import base64
+        name, data = self._wd_gunzip(name, base64.b64decode(b64 or ""))
+        return {"results": self._wd_import_many([(name, data, "This PC")])}
+
+    def wd_flipper_scan(self):
+        """Wardrive-looking files on the SD card (apps_data and any wardrive/GPS folders at the top). Read only."""
+        import device
+        import wardrive
+        try:
+            port = self._port()
+
+            def fn(mod, st):
+                found = []
+
+                def walk(path, depth):
+                    for kind, name, size in device._list(st, path):
+                        p = f"{path}/{name}"
+                        if kind == "D" and depth < 3:
+                            walk(p, depth + 1)
+                        elif kind == "F" and wardrive.looks_like_log(p, size):
+                            found.append({"path": p, "size": size})
+                roots = ["/ext/apps_data"]
+                for kind, name, _ in device._list(st, "/ext"):
+                    if kind == "D" and re.search(r"wardriv|wigle|gps|kismet|marauder|ghost", name, re.I):
+                        roots.append(f"/ext/{name}")
+                for r in roots:
+                    walk(r, 0)
+                return found
+            files = device.storage_call(port, fb.sdk_dirs(), fn, seconds=90)
+            return {"files": sorted(files, key=lambda f: f["path"].lower())}
+        except (fb.BuildError, device.DeviceError) as e:
+            return {"error": str(e)}
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"Couldn't look through the SD card: {e}"}
+
+    def wd_flipper_import(self, files):
+        """Copy these files off the Flipper (read only, nothing on it changes) and import them."""
+        import device
+        files = [f for f in files if str(f.get("path", "")).startswith("/ext/") and ".." not in f["path"].split("/")]
+        got = []
+        try:
+            port = self._port()
+            total = len(files)
+
+            def on_file(it, data):
+                got.append((*self._wd_gunzip(it["path"].rsplit("/", 1)[-1], data), "Flipper " + it["path"]))
+                self._emit("wd", ev="read", name=it["path"], done=len(got), total=total)
+            device.read_many(port, fb.sdk_dirs(), files, on_file)
+        except (fb.BuildError, device.DeviceError) as e:
+            return {"error": str(e)}
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"Couldn't read from the Flipper: {e}"}
+        return {"results": self._wd_import_many(got)}
+
+    def wd_rename(self, did, name):
+        self._wd().rename_drive(int(did), name)
+        return {"ok": True}
+
+    def wd_delete(self, did):
+        return self._wd().delete_drive(int(did))
+
+    def wd_wipe(self):
+        self._wd().wipe()
+        return {"ok": True}
+
+    def wd_export(self, fmt, ids):
+        import webview
+        ext = {"wigle": ("csv", "WiGLE CSV (*.csv)"), "csv": ("csv", "CSV (*.csv)"), "kml": ("kml", "Google Earth KML (*.kml)"),
+               "geojson": ("geojson", "GeoJSON (*.geojson)")}.get(fmt)
+        if not ext:
+            return {"error": "Unknown format"}
+        try:
+            text, count, hidden = self._wd().export(fmt, ids, self._wd().get("home"))
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"Couldn't export: {e}"}
+        if not count:
+            return {"error": "Nothing to export: everything is inside your home zone." if hidden else "Nothing to export."}
+        fname = f"wardrive-{time.strftime('%Y%m%d')}{'-wigle' if fmt == 'wigle' else ''}.{ext[0]}"
+        try:
+            res = self._window.create_file_dialog(webview.FileDialog.SAVE, save_filename=fname, file_types=(ext[1], "All files (*.*)"))
+        except AttributeError:
+            res = self._window.create_file_dialog(webview.SAVE_DIALOG, save_filename=fname)
+        if not res:
+            return {"cancelled": True}
+        out = Path(res[0] if isinstance(res, (list, tuple)) else res)
+        if out.suffix.lower() != "." + ext[0]:
+            out = out.with_suffix("." + ext[0])
+        out.write_text(text, encoding="utf-8", newline="\n")
+        return {"ok": True, "path": str(out), "count": count, "hidden": hidden}
+
+    # captured handshakes (each EAPOL handshake filed under its access point)
+    def wd_handshakes(self):
+        return {"shakes": self._wd().handshakes()}
+
+    def wd_shake_export(self, sid):
+        import webview
+        got = self._wd().shake(sid)
+        if not got:
+            return {"error": "That handshake is no longer here."}
+        fname, data = got
+        try:
+            res = self._window.create_file_dialog(webview.FileDialog.SAVE, save_filename=fname, file_types=("Packet capture (*.pcap)", "All files (*.*)"))
+        except AttributeError:
+            res = self._window.create_file_dialog(webview.SAVE_DIALOG, save_filename=fname)
+        if not res:
+            return {"cancelled": True}
+        out = Path(res[0] if isinstance(res, (list, tuple)) else res)
+        if out.suffix.lower() != ".pcap":
+            out = out.with_suffix(".pcap")
+        out.write_bytes(data)
+        return {"ok": True, "path": str(out)}
+
+    # offline street maps (cut from the Protomaps OpenStreetMap build; only the area is sent, never the logs)
+    def wd_map_plan(self, bbox, maxzoom=15):
+        import mapextract
+        try:
+            p = mapextract.plan(tuple(float(x) for x in bbox), int(maxzoom))
+            return {"tiles": p["tiles"], "bytes": p["bytes"], "limit": mapextract.LIMIT_BYTES}
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"Couldn't reach the map server: {e}"}
+
+    def wd_map_download(self, bbox, name, maxzoom=15):
+        import mapextract
+        if getattr(self, "_wd_dl", None) and self._wd_dl.is_alive():
+            return {"error": "A map is already downloading."}
+        slug = re.sub(r"[^a-z0-9]+", "-", (name or "map").lower()).strip("-")[:40] or "map"
+        out = self._wd_maps_dir() / f"{slug}.pmtiles"
+        n = 2
+        while out.exists():
+            out = self._wd_maps_dir() / f"{slug}-{n}.pmtiles"
+            n += 1
+        self._wd_cancel = threading.Event()
+
+        def run():
+            last = [0.0]
+
+            def prog(msg, done, total):
+                if time.time() - last[0] > 0.25 or done == total:
+                    last[0] = time.time()
+                    self._emit("wd", ev="map", msg=msg, done=done, total=total)
+            try:
+                r = mapextract.extract(tuple(float(x) for x in bbox), out, int(maxzoom), progress=prog, cancel=self._wd_cancel,
+                                       name=(name or "Map").strip()[:60])
+                self._emit("wd", ev="map_done", id=out.stem, bytes=r["bytes"], tiles=r["tiles"])
+            except mapextract.Cancelled:
+                out.with_suffix(".part").unlink(missing_ok=True)
+                self._emit("wd", ev="map_done", cancelled=True)
+            except Exception as e:  # noqa: BLE001
+                out.with_suffix(".part").unlink(missing_ok=True)
+                self._emit("wd", ev="map_done", error=str(e))
+        self._wd_dl = threading.Thread(target=run, daemon=True)
+        self._wd_dl.start()
+        return {"ok": True}
+
+    def wd_map_cancel(self):
+        if getattr(self, "_wd_cancel", None):
+            self._wd_cancel.set()
+        return {"ok": True}
+
+    def wd_map_delete(self, mid):
+        if not re.fullmatch(r"[A-Za-z0-9_\-]{1,80}", mid or "") or mid == "world":
+            return {"error": "Can't delete that one"}
+        (self._wd_maps_dir() / f"{mid}.pmtiles").unlink(missing_ok=True)
+        return {"ok": True}
+
+    def wd_map_import(self):
+        import shutil
+        import mapextract
+        p = self._pick(("OpenStreetMap vector maps (*.pmtiles)", "All files (*.*)"))
+        if not p:
+            return {"cancelled": True}
+        p = Path(p)
+        try:
+            mapextract.info(p)
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"That map can't be used: {e}"}
+        slug = re.sub(r"[^A-Za-z0-9_\-]+", "-", p.stem)[:60].strip("-") or "map"
+        out = self._wd_maps_dir() / f"{slug}.pmtiles"
+        if out.exists():
+            return {"error": "A map with that name is already there."}
+        shutil.copyfile(p, out)
+        return {"ok": True, "id": out.stem}
 
     # ------------------------------------------------ misc
     def clear_recent(self):

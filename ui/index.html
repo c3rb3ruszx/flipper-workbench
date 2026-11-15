@@ -4,7 +4,11 @@
 <meta charset="utf-8">
 <title>Flipper Workbench</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="vendor/map/leaflet.css">
+<link rel="stylesheet" href="vendor/map/MarkerCluster.css">
 <link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="wardrive.css">
+<link rel="stylesheet" href="signal.css">
 </head>
 <body class="booting">
 
@@ -70,6 +74,7 @@
       <button class="tab" data-tab="library"><i data-icon="folder"></i>Library<span class="count" id="libCount"></span></button>
       <button class="tab" data-tab="discover"><i data-icon="search"></i>Discover</button>
       <button class="tab" data-tab="flipper"><i data-icon="usb"></i>On Flipper<span class="count" id="flCount"></span></button>
+      <button class="tab" data-tab="wardrive"><i data-icon="pin"></i>Wardrive<span class="count" id="wdCount"></span></button>
       <span class="tab-ink" id="tabInk"></span>
     </nav>
 
@@ -170,7 +175,8 @@
         <div class="sd" id="flSd" hidden><div class="sd-bar" id="flSdBar"></div><span id="flSdText"></span></div>
         <div class="seg sub" id="flSeg">
           <span class="seg-ink" id="flSegInk"></span>
-          <button data-sub="apps" class="on">Apps</button>
+          <button data-sub="dash" class="on">Dashboard</button>
+          <button data-sub="apps">Apps</button>
           <button data-sub="files">Files</button>
           <button data-sub="backups">Backups</button>
           <button data-sub="cli">CLI</button>
@@ -179,7 +185,42 @@
         </div>
         <div class="fl-progress" id="flProg" hidden><span class="blk"></span><span id="flProgText"></span><button class="mini" id="flStop">Stop</button></div>
 
-        <div class="sub-pane" id="subApps">
+        <div class="sub-pane" id="subDash">
+          <div class="dash-empty" id="dashEmpty">
+            <b>No Flipper plugged in</b>
+            <span>Plug it in over USB and close qFlipper. The dashboard shows its firmware, battery, memory, SD card, apps and backups in one place.</span>
+          </div>
+          <div id="dashBody" hidden>
+            <div class="dash-hero">
+              <div class="dash-id">
+                <div class="dash-facts" id="dashFacts"></div>
+              </div>
+              <div class="dash-acts">
+                <button class="mini" id="dashBackup"><i data-icon="download"></i>Back up now</button>
+                <button class="mini" id="dashHealth"><i data-icon="pulse"></i>Health check</button>
+                <button class="mini" id="dashFwBtn"><i data-icon="usb"></i>Firmware</button>
+                <button class="mini" id="dashRestart"><i data-icon="refresh"></i>Restart</button>
+              </div>
+            </div>
+            <div class="dash-alerts" id="dashAlerts"></div>
+            <div class="dash-grid">
+              <div class="dash-card" id="dcBattery"><div class="dc-h">Battery</div><div class="dc-body"></div></div>
+              <div class="dash-card" id="dcMemory"><div class="dc-h">Memory</div><div class="dc-body"></div></div>
+              <div class="dash-card" id="dcSd"><div class="dc-h">SD card</div><div class="dc-body"></div></div>
+              <div class="dash-card" id="dcApps"><div class="dc-h">Apps</div><div class="dc-body"></div></div>
+              <div class="dash-card" id="dcBackups"><div class="dc-h">Backups</div><div class="dc-body"></div></div>
+              <div class="dash-card" id="dcFirmware"><div class="dc-h">Firmware</div><div class="dc-body"></div></div>
+            </div>
+            <div class="dash-card dash-wide">
+              <div class="dc-h">Battery over time <span class="dc-seg" id="dashRange"><button data-days="1">Day</button><button data-days="7" class="on">Week</button><button data-days="30">Month</button></span></div>
+              <canvas class="dash-chart" id="dashChart"></canvas>
+              <div class="dash-chartnote" id="dashChartNote"></div>
+            </div>
+            <div class="dash-status" id="dashStatus"></div>
+          </div>
+        </div>
+
+        <div class="sub-pane" id="subApps" hidden>
           <div class="input-wrap small">
             <i data-icon="search" class="in-icon"></i>
             <input id="flSearch" type="text" spellcheck="false" autocomplete="off" placeholder="Filter apps on your Flipper">
@@ -242,6 +283,15 @@
                 <div class="vw-sec">Animations and asset packs</div>
                 <div class="tool-row"><button class="mini" id="hcScan">Check my packs</button><span class="tool-status" id="hcScanStatus">Reads every pack on the SD card. Takes a little while.</span></div>
                 <div class="vw-btns" id="hcPacks"></div>
+              </div>
+            </details>
+            <details class="tool" data-tool="signal">
+              <summary><b>Signal viewer</b><span>Zoom into the timing of a Sub-GHz or infrared file, with pulse stats and a decoding guess</span></summary>
+              <div class="tool-body">
+                <div class="sig-drop" id="sigDrop">
+                  <button class="mini primary" id="sigOpenPc"><i data-icon="folder"></i>Open a .sub or .ir file</button>
+                  <span>or drop one here. Files on your Flipper open from <b>Files</b>: click one, then <b>Signal viewer</b>.</span>
+                </div>
               </div>
             </details>
             <details class="tool" data-tool="irb">
@@ -630,6 +680,63 @@
           </div>
         </div>
       </div>
+
+      <!-- WARDRIVE -->
+      <div class="pane wd-pane" data-pane="wardrive">
+        <div class="wd-bar">
+          <button class="mini primary" id="wdFromFlipper" title="Find wardrive logs on the Flipper's SD card and copy them here (read only)"><i data-icon="usb"></i>From Flipper</button>
+          <button class="mini" id="wdFromPc" title="Open log files from this PC (or drop them on the map)"><i data-icon="folder"></i>Open files</button>
+          <div class="input-wrap small grow wd-search"><i data-icon="search" class="in-icon"></i><input id="wdSearch" type="text" spellcheck="false" autocomplete="off" placeholder="Search name, MAC or maker"></div>
+          <div class="wd-exp">
+            <button class="mini" id="wdExportBtn"><i data-icon="download"></i>Export</button>
+            <div class="wd-menu" id="wdExportMenu" hidden>
+              <div class="wd-menu-note" id="wdExportNote"></div>
+              <button data-exp="wigle"><b>WiGLE CSV</b><small>upload to WiGLE later, or open in other tools</small></button>
+              <button data-exp="kml"><b>KML</b><small>Google Earth</small></button>
+              <button data-exp="geojson"><b>GeoJSON</b><small>QGIS and other map tools</small></button>
+              <button data-exp="csv"><b>CSV</b><small>one row per network, for Excel</small></button>
+              <button data-exp="report"><b>Report</b><small>a one-page summary with a map, opens in your browser</small></button>
+            </div>
+          </div>
+        </div>
+        <div class="wd-filters" id="wdFilters"></div>
+        <div class="wd-main">
+          <div class="wd-mapwrap" id="wdMapWrap">
+            <div id="wdMap"></div>
+            <div class="wd-layers" id="wdLayers">
+              <div class="wd-lg"><button data-mode="dots">Dots</button><button data-mode="cluster">Groups</button><button data-mode="heat">Heatmap</button></div>
+              <div class="wd-lg"><span>Color</span><button data-color="sec">Security</button><button data-color="sig">Signal</button><button data-color="kind">Type</button></div>
+              <div class="wd-lg"><button id="wdRouteBtn">Route</button><button id="wdFitBtn" title="Zoom to all your logs">Fit</button></div>
+            </div>
+            <div class="wd-legend" id="wdLegend"></div>
+            <div class="wd-hint" id="wdHomeHint" hidden>Click the map where your home is <button class="mini" id="wdHomeHintCancel">Cancel</button></div>
+            <div class="wd-replay" id="wdReplay" hidden>
+              <button class="wd-rpplay" id="wdRpPlay">&#9654;</button>
+              <div class="wd-rpmid">
+                <div class="wd-rptop"><b id="wdRpName"></b><span id="wdRpTime"></span><span id="wdRpCount"></span></div>
+                <input type="range" id="wdRpSlider" min="0" max="1000" value="0">
+              </div>
+              <div class="wd-rpspeed"><button data-speed="0.5">0.5x</button><button data-speed="1" class="on">1x</button><button data-speed="3">3x</button></div>
+              <button class="icon-btn" id="wdRpClose" title="Stop the replay"><i data-icon="cross"></i></button>
+            </div>
+            <div class="wd-empty" id="wdEmpty" hidden>
+              <div class="wd-emptycard">
+                <div class="wd-et">Map your wardrives, offline</div>
+                <p>Import the logs your wardriving apps saved (Marauder and others) and see every network on a real map: what security they use, where the signal was strongest, your route, and how each drive compares.</p>
+                <div class="wd-acts"><button class="mini primary" id="wdEmptyFlipper"><i data-icon="usb"></i>From Flipper</button><button class="mini" id="wdEmptyPc"><i data-icon="folder"></i>Open files</button></div>
+                <p class="small">Reads WiGLE CSV, Kismet, GPX, KML and NMEA files. Or drop them here. Everything stays on this computer; nothing is uploaded.</p>
+              </div>
+            </div>
+            <div class="wd-dropzone">Drop wardrive logs to import them</div>
+          </div>
+          <aside class="wd-side">
+            <div class="wd-seg" id="wdSeg">
+              <button data-side="overview" class="on">Overview</button><button data-side="list">List</button><button data-side="drives">Drives</button><button data-side="shakes">Handshakes</button><button data-side="maps">Maps</button><button data-side="privacy">Privacy</button>
+            </div>
+            <div class="wd-sbody" id="wdSide"></div>
+          </aside>
+        </div>
+      </div>
     </div>
   </section>
 </main>
@@ -666,6 +773,18 @@
   </div>
 </div>
 
+<!-- wardrive: logs found on the Flipper -->
+<div class="modal" id="wdPick" hidden>
+  <div class="sheet">
+    <div class="sheet-head"><div><div class="sheet-title">Wardrive logs on your Flipper</div><div class="sheet-sub" id="wdPickSub"></div></div></div>
+    <div class="bk-grid wd-pickgrid" id="wdPickList"></div>
+    <div class="sheet-foot">
+      <button class="mini" id="wdPickCancel">Cancel</button>
+      <button class="mini primary big" id="wdPickGo">Import</button>
+    </div>
+  </div>
+</div>
+
 <!-- confirm dialog -->
 <div class="modal" id="confirm" hidden>
   <div class="sheet small">
@@ -679,6 +798,38 @@
   </div>
 </div>
 
+<div class="modal" id="sigModal" hidden>
+  <div class="sheet sig-sheet">
+    <div class="sheet-head vw-head">
+      <div class="vw-titles"><div class="sheet-title" id="sigTitle">Signal</div><div class="sheet-sub" id="sigSub"></div></div>
+      <div class="vw-actions">
+        <button class="mini" id="sigCopy" title="Copy the timings of the selected burst"><i data-icon="copy"></i>Copy timings</button>
+        <button class="mini" id="sigOpen"><i data-icon="folder"></i>Open file</button>
+        <button class="icon-btn" id="sigClose" title="Close (Esc)"><i data-icon="cross"></i></button>
+      </div>
+    </div>
+    <div class="sig-body">
+      <div class="sig-list" id="sigList" hidden></div>
+      <div class="sig-main">
+        <div class="sig-info" id="sigInfo"></div>
+        <canvas class="sig-mini" id="sigMini" title="The whole signal: click or drag to move"></canvas>
+        <div class="sig-scopewrap"><canvas class="sig-scope" id="sigScope"></canvas><div class="sig-tip" id="sigTip" hidden></div></div>
+        <div class="sig-bar">
+          <button class="mini" id="sigZoomIn" title="Zoom in (+)">+</button><button class="mini" id="sigZoomOut" title="Zoom out (-)">&minus;</button>
+          <button class="mini" id="sigFit" title="Show everything (0)">Fit</button>
+          <span class="sig-view" id="sigView"></span>
+          <span class="sig-hint">Scroll to zoom · drag to move · double-click to fit</span>
+        </div>
+        <div class="sig-stats" id="sigStats"></div>
+        <div class="sig-cols">
+          <div class="sig-panel"><div class="vw-sec">Pulse lengths</div><canvas class="sig-hist" id="sigHist"></canvas><div class="sig-legend" id="sigHistKey"></div></div>
+          <div class="sig-panel"><div class="vw-sec">Bursts</div><div class="sig-bursts" id="sigBursts"></div></div>
+        </div>
+        <div class="sig-panel" id="sigDecode"></div>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="modal" id="viewer" hidden>
   <div class="sheet viewer">
     <div class="sheet-head vw-head">
@@ -713,6 +864,12 @@
 
 <script src="vendor/dolphin.js"></script>
 <script src="icons.js"></script>
+<script src="vendor/map/leaflet.js"></script>
+<script src="vendor/map/leaflet.markercluster.js"></script>
+<script src="vendor/map/leaflet-heat.js"></script>
+<script src="vendor/map/protomaps-leaflet.js"></script>
+<script src="wardrive.js"></script>
+<script src="signal.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

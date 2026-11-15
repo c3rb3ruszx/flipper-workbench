@@ -17,9 +17,10 @@ Everything Flipper Workbench does, why it's there, and how to use it, with pictu
 7. [Screen mirror and remote control](#7-screen-mirror-and-remote-control)
 8. [Tools](#8-tools)
 9. [Studio: animations and asset packs](#9-studio-animations-and-asset-packs)
-10. [Updates, settings and where your files live](#10-updates-settings-and-where-your-files-live)
-11. [Troubleshooting](#11-troubleshooting)
-12. [Using it responsibly](#12-using-it-responsibly)
+10. [Wardrive: your logs on an offline map](#10-wardrive-your-logs-on-an-offline-map)
+11. [Updates, settings and where your files live](#11-updates-settings-and-where-your-files-live)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Using it responsibly](#13-using-it-responsibly)
 
 ---
 
@@ -114,7 +115,8 @@ screenshot frame and recording.
 | **Build** | Paste a GitHub link or pick a folder, choose the firmware, build |
 | **Library** | Every app you've built, per firmware, with Rebuild all |
 | **Discover** | Flipper's official Apps Catalog and the community IR remote library |
-| **On Flipper** | Everything about the plugged-in Flipper: Apps, Files, Backups, CLI, Tools and Studio |
+| **On Flipper** | Everything about the plugged-in Flipper: Dashboard, Apps, Files, Backups, CLI, Tools and Studio |
+| **Wardrive** | Your wardriving logs on an offline map, with stats, replay and export. The map gets the whole window |
 
 **Header:** the Flipper pill (click it to pick another Flipper when several are plugged in), the **SDK**
 button (forces a fresh build kit download) and a link to GitHub. When a new Workbench version is out, an
@@ -195,8 +197,29 @@ one click.
 ## 6. Your Flipper: the On Flipper tab
 
 Plug in your Flipper and open **On Flipper**. The top shows its name, firmware, API version and port, a bar
-of SD card space, and four buttons: **Firmware**, **SD map**, **Clean up** and **Refresh**. Below are six
-sections: Apps, Files, Backups, CLI, Tools and Studio.
+of SD card space, and four buttons: **Firmware**, **SD map**, **Clean up** and **Refresh**. Below are seven
+sections: Dashboard, Apps, Files, Backups, CLI, Tools and Studio.
+
+### Dashboard
+
+The first thing you see. One page with:
+
+- **The Flipper itself**: model, hardware version, region, color, when its firmware was built, radio stack,
+  how long it has been running and which app is open.
+- **Battery**: charge, whether it's charging (and roughly when it will be full), voltage, temperature,
+  battery health and capacity.
+- **Memory**, **SD card**, **Apps** (by category, and how many you built here), **Backups** (when this Flipper
+  was last backed up) and **Firmware** (whether a newer build of what it runs is out).
+- **Notes** at the top when something needs a look: SD card almost full, memory ran low, no recent backup,
+  battery worn or warm, firmware update out.
+- **Battery over time**: Workbench takes a reading when you plug the Flipper in, then every 10 minutes while
+  it stays plugged in. The orange dots are how full it was when you plugged it in, so over a week you can see
+  how much it drains between uses. Readings stay on this computer.
+
+The buttons at the top back it up, open the Health check, open Firmware, or restart it. The page refreshes
+every 30 seconds while you're on it.
+
+![Dashboard: firmware, hardware, battery, memory, SD card, apps, backups and notes in one place](images/dashboard.png)
 
 ### Apps
 
@@ -320,6 +343,28 @@ says how much it saves and compresses them in place; the pictures stay exactly t
 Flipper is using is never changed: pick another one in Momentum's settings first.
 
 ![Health check: memory, battery, SD card and the memory each asset pack needs](images/tool-health.png)
+
+### Signal viewer
+
+Shows the timing of a Sub-GHz or infrared signal the way a logic analyzer does. Open it with **Open a .sub or
+.ir file** (or drop one on it), or from **Files**: click a `.sub` or `.ir` file, then **Signal viewer**, or the
+wave button next to an IR button.
+
+- **The trace**: on-time in orange, off-time as the low line. Scroll to zoom, drag to move, double-click to
+  fit. The strip above it is the whole signal; click it to jump. Hover for the length of any pulse.
+- **Stats**: length, number of pulses, bursts, the **base unit** (the shortest common pulse, often called
+  TE), and how many bursts repeat the same thing.
+- **Pulse lengths**: a histogram of on (up) and off (down) times, with marks at 1x, 2x, 3x the base unit.
+  Coded signals show a few tall bars; noise shows a smear.
+- **Bursts**: each transmission in the recording, with noise between them left out. Click one to zoom to it.
+- **Decoding guess**: for the selected burst, which kind of pulse coding it looks like and the bits it
+  carries, as hex both ways round. It's a guess from timing alone, meant to help you read the signal.
+
+Decoded IR buttons (NEC, Samsung, Sony, RC5, RC6, RCA, Pioneer) and Princeton Sub-GHz keys have no recording,
+so Workbench draws them from the protocol's ideal timing and says so. The viewer only reads files; it never
+sends anything.
+
+![Signal viewer: a recording zoomed to one burst, with pulse stats, the pulse-length histogram and the bursts](images/signal-viewer.png)
 
 ### IR remote builder
 
@@ -468,7 +513,111 @@ checked against its checksum.
 
 ---
 
-## 10. Updates, settings and where your files live
+## 10. Wardrive: your logs on an offline map
+
+![The Wardrive tab: networks from two drives on an offline street map, with security stats on the right](images/wardrive.png)
+
+Wardriving apps (Marauder on an ESP32 board with a GPS module, and other wardriver apps) log every network they hear
+along with where you were. Usually you'd upload those logs to WiGLE to see them on a map. The **Wardrive**
+tab shows them on a real map instead, on your own computer: nothing is uploaded and you don't need an account.
+
+### Import logs
+
+- **From Flipper**: Workbench looks through `apps_data` and any wardrive or GPS folders on the SD card and
+  lists the logs it finds (Marauder keeps them in `apps_data/marauder/logs`, named `wardrive_...`). Tick the
+  ones you want and press **Import**. This only copies them; nothing on the Flipper changes.
+- **Open files**, or drop files on the map: WiGLE CSV (what most wardriving apps write), Kismet `.kismet`
+  files, GPX and NMEA GPS tracks, and KML. Zipped `.gz` logs work too.
+
+Importing the same file twice is caught. Networks you saw on several drives are merged, keeping every sighting.
+
+### Read the map
+
+- **Dots, Groups, Heatmap** (top left): every network, networks grouped when zoomed out, or where the most
+  networks are.
+- **Color**: by security (open, WEP, WPA, WPA2, WPA3, enterprise), by signal strength, or by type (WiFi,
+  Bluetooth). The key is at the bottom left.
+- **Route** draws where you drove. **Fit** zooms to all your logs.
+- Click a network for its details: every place it was seen (lines colored by signal), the strongest signal,
+  its likely spot (the signal-weighted middle of the strongest sightings), maker, channel and when it was
+  first and last seen.
+
+### Analyse
+
+The panel on the right has five parts:
+
+- **Overview**: totals, then WiFi security, bands, 2.4 GHz channels (1, 6 and 11 are the ones that don't
+  overlap), the busiest 5 GHz channels, device makers, common names and new networks per drive. Click any bar
+  to filter the map by it.
+- **List**: every network on the map, sorted by signal, name, last seen or times seen.
+- **Drives**: each import with its date, networks, how many were new and the distance. **Show only** one,
+  **Replay** it (the route draws itself and networks pop up where they were first heard), rename or delete
+  it. **Compare two drives** shows what was only on one, only on the other, or on both.
+- **Maps** and **Privacy**: below.
+
+The search box and the chips above the map (WiFi, Bluetooth, a drive) filter everything at once.
+
+### Offline maps
+
+A world map with countries and big cities is built in. For streets and buildings, open **Maps**, choose
+**Where my logs are** (or **What's on screen**), press **Check the size**, then **Download**. A city is
+usually 10 to 30 MB. It's cut from the latest OpenStreetMap build and saved next to Workbench, and works
+offline from then on. Only the map area is requested, never your logs. Already have a `.pmtiles` map? Use
+**Use a .pmtiles file**.
+
+### What changed between drives
+
+Drive the same streets again and Workbench tells you what's different. Open **Drives**: at the top, **What
+changed** compares a drive (the latest one, or any you pick) with every drive before it:
+
+- **New**: never seen on an earlier drive.
+- **Gone**: seen before, your route this time passed within about 40 m of where it was, and it wasn't heard.
+- **Moved**: its likely spot shifted more than 200 m. The map draws an arrow from the old spot to the new one.
+- **Renamed**: same device, new name.
+- **Security changed**: for example a network that went from WPA2 to open.
+
+Click one to show just those networks on the map, with a list underneath. **Stop showing changes** clears it.
+
+### Points of interest and your devices
+
+The Overview lists **points of interest**, each one a filter: open WiFi, weak security (WEP or old WPA),
+default router names (a name nobody changed often means the password wasn't changed either), hidden
+networks, printers, cameras and smart-home gear, phone hotspots, and networks with a captured handshake.
+
+Open your own router, phone or gadgets and press **This is mine**. They get a **My devices** filter, and in
+Privacy you can **leave my devices out of exports and reports**.
+
+### Drive report
+
+**Report** on a drive (in Drives), **Report on all drives**, or **Export > Report** makes one web page with a
+map of the drive, the stats, points of interest, what changed and a table of the networks worth a look. It's
+saved where you choose and opens in your browser, where you can also print it or save it as a PDF. Your
+home zone and (if you chose) your own devices are left out.
+
+### Captured handshakes
+
+If you capture WPA handshakes (for example with Marauder's sniffer, saved as a `.pcap` / `.pcapng`), open the
+file the same way you import a log: **Open files**, **From Flipper**, or drop it on the map. Workbench reads the
+802.11 frames and files every handshake under the access point it belongs to, so one big capture full of
+handshakes is split into one per network. The **Handshakes** panel lists them with how complete each is: the
+**1 2 3 4** marks show which of the four handshake messages were caught, and one is **complete** once the first
+two are there (that pairs an access point with a client). A capture can also hold a **PMKID**, which comes from
+the first message alone; those are marked with a blue **PMKID** tag and counted on their own. Networks that have
+a handshake get a ring on the map and a section in their detail. The download button next to one saves it back
+out as its own `.pcap`. Workbench only reads and sorts the frames: it never cracks a key, tries a password or
+sends anything anywhere.
+
+### Privacy and export
+
+- **Home zone** (Privacy): set a spot and a size and everything inside is left out of exports. Turn on
+  **Hide it on the map too** before screenshots or screen sharing.
+- **Export** (top right) saves what the map shows now: **WiGLE CSV** (upload to WiGLE later if you want),
+  **KML** for Google Earth, **GeoJSON** for QGIS and other map tools, or **CSV** for Excel.
+- **Delete all wardrive data** (Privacy) removes every drive. Your original log files are never touched.
+
+---
+
+## 11. Updates, settings and where your files live
 
 **Updates:** Workbench checks for new versions on its own. When one is out, the **Update** button in the
 header downloads it, checks it against the SHA-256 GitHub publishes, and restarts into it. Your build kits,
@@ -483,6 +632,7 @@ built apps, Library, settings and backups stay. If the swap fails, the old versi
 | `backups\` | Your Flipper backups (zip files) |
 | `profiles\` | Saved profiles |
 | `my_packs\` | Asset packs you made or imported in Pack maker |
+| `wardrive\` | Your imported wardrive logs (`wardrive.db`) and downloaded maps (`maps\`) |
 | `.cache\` | Build kits (SDKs), the toolchain and cached catalog data. Safe to delete; it's downloaded again |
 | `settings.json`, `library.json` | Your settings and the Library |
 
@@ -490,7 +640,7 @@ To move Workbench, move the whole folder.
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 **Workbench doesn't see my Flipper.**
 Close qFlipper and any browser tab using the Flipper (only one program can use its USB port), try another
@@ -516,7 +666,7 @@ faster. Build kits refresh themselves once a day; the **SDK** button in the head
 
 ---
 
-## 12. Using it responsibly
+## 13. Using it responsibly
 
 The Flipper can send infrared, Sub-GHz and NFC signals and type into computers. Workbench makes those things
 easier, so a few reminders:
@@ -524,6 +674,10 @@ easier, so a few reminders:
 - **BadUSB:** only run scripts on computers you own or have permission to use.
 - **Transmitting:** IR, Sub-GHz and NFC transmissions are regulated differently from country to country.
   Only control your own devices.
+- **Wardriving:** listening for networks is legal in most places, but laws differ. The logs show where
+  people's networks are, so share them with care (the home zone helps), and never connect to networks that
+  aren't yours. Capturing handshakes from networks you don't own or have permission to test is a different
+  matter and is illegal in many places; Workbench only sorts captures you already have, it doesn't capture.
 - **Safety nets:** commands that transmit, delete or change settings ask before they run, firmware is never
   installed without a second confirmation, nothing on the Flipper is deleted on its own, and backups never
   remove files.

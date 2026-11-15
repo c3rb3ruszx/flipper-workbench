@@ -80,6 +80,112 @@ def _mhz(hz):
         return hz
 
 
+# ---------------------------------------------------------------- signal timings for the signal viewer
+# Signed microseconds: positive = signal on (carrier / high), negative = off. Drawn from the protocol's ideal timing,
+# so a parsed button or key can be looked at like a recording. Nothing here sends anything.
+MAX_WAVE = 400_000
+IR_CARRIER = {"NEC": 38000, "NECext": 38000, "NEC42": 38000, "NEC42ext": 38000, "Samsung32": 38000, "Pioneer": 40000,
+              "RCA": 56000, "SIRC": 40000, "SIRC15": 40000, "SIRC20": 40000, "RC5": 36000, "RC5X": 36000, "RC6": 36000}
+
+
+def _le(value):
+    try:
+        return int.from_bytes(bytes(int(x, 16) for x in value.split()), "little")
+    except (ValueError, AttributeError):
+        return None
+
+
+def _lsb(v, n):
+    return [(v >> i) & 1 for i in range(n)]
+
+
+def _msb(v, n):
+    return [(v >> i) & 1 for i in reversed(range(n))]
+
+
+def _distance(lead, mark, one, zero, bits):
+    """Pulse-distance coding (NEC family, Samsung, RCA, Pioneer): leader, then mark + long/short space per bit, stop mark."""
+    w = [lead[0], -lead[1]]
+    for b in bits:
+        w += [mark, -(one if b else zero)]
+    return w + [mark]
+
+
+def _levels(halves, unit):
+    """List of on/off half-bits -> signed durations (leading/trailing off-time dropped)."""
+    w = []
+    for lv in halves:
+        d = unit if lv else -unit
+        if w and (w[-1] > 0) == (d > 0):
+            w[-1] += d
+        else:
+            w.append(d)
+    while w and w[0] < 0:
+        w.pop(0)
+    while w and w[-1] < 0:
+        w.pop()
+    return w
+
+
+def ir_timings(protocol, address, command):
+    """Ideal timing of one press of a parsed IR button, or None for protocols not drawn here."""
+    a, c = _le(address), _le(command)
+    if a is None or c is None:
+        return None
+    p = protocol
+    if p == "NEC":
+        return _distance((9000, 4500), 560, 1690, 560, _lsb(a, 8) + _lsb(~a & 0xFF, 8) + _lsb(c, 8) + _lsb(~c & 0xFF, 8))
+    if p == "NECext":
+        return _distance((9000, 4500), 560, 1690, 560, _lsb(a, 16) + _lsb(c, 16))
+    if p == "NEC42":
+        return _distance((9000, 4500), 560, 1690, 560, _lsb(a, 13) + _lsb(~a & 0x1FFF, 13) + _lsb(c, 8) + _lsb(~c & 0xFF, 8))
+    if p == "NEC42ext":
+        return _distance((9000, 4500), 560, 1690, 560, _lsb(a, 26) + _lsb(c, 16))
+    if p == "Samsung32":
+        return _distance((4500, 4500), 550, 1650, 550, _lsb(a, 8) + _lsb(a, 8) + _lsb(c, 8) + _lsb(~c & 0xFF, 8))
+    if p == "Pioneer":
+        return _distance((8500, 4250), 500, 1500, 500, _lsb(a, 8) + _lsb(~a & 0xFF, 8) + _lsb(c, 8) + _lsb(~c & 0xFF, 8))
+    if p == "RCA":
+        return _distance((4000, 4000), 500, 2000, 1000, _msb(a, 4) + _msb(c, 8) + _msb(~a & 0xF, 4) + _msb(~c & 0xFF, 8))
+    if p in ("SIRC", "SIRC15", "SIRC20"):
+        bits = _lsb(c, 7) + _lsb(a, {"SIRC": 5, "SIRC15": 8, "SIRC20": 13}[p])
+        w = [2400]
+        for b in bits:
+            w += [-600, 1200 if b else 600]
+        return w
+    if p in ("RC5", "RC5X"):
+        s2 = 1 if p == "RC5" else (~c >> 6) & 1
+        halves = []
+        for b in [1, s2, 0] + _msb(a, 5) + _msb(c, 6):
+            halves += [0, 1] if b else [1, 0]          # RC5: a 1 rises in the middle of its bit
+        return _levels(halves, 889)
+    if p == "RC6":
+        halves = [1] * 6 + [0] * 2 + [1, 0]            # leader, then the start bit
+        for b in [0, 0, 0]:                            # mode 0
+            halves += [1, 0] if b else [0, 1]          # RC6: a 1 falls in the middle of its bit
+        halves += [0, 0, 1, 1]                         # toggle bit, twice as long
+        for b in _msb(a, 8) + _msb(c, 8):
+            halves += [1, 0] if b else [0, 1]
+        return _levels(halves, 444)
+    return None
+
+
+def princeton_timings(key, bits, te, repeats=3):
+    """Princeton (the common fixed-code remote chip): 1 = 3 TE on + 1 off, 0 = 1 on + 3 off, then 1 on + 30 off."""
+    v = _le(" ".join(reversed((key or "").split())))     # .sub keys are written most significant byte first
+    try:
+        n, te = int(bits), int(te)
+    except (TypeError, ValueError):
+        return None
+    if v is None or not 1 <= n <= 64 or not 50 <= te <= 5000:
+        return None
+    one = []
+    for b in _msb(v & ((1 << n) - 1), n):
+        one += [3 * te, -te] if b else [te, -3 * te]
+    one += [te, -30 * te]
+    return one * repeats
+
+
 def parse(name, text, path=""):
     kind = kind_of(path or name)
     pairs = _pairs(text)
@@ -102,8 +208,17 @@ def parse(name, text, path=""):
             total_us = sum(abs(x) for x in raw)
             f.append(["Samples", f"{len(raw):,}"])
             f.append(["Length", f"{total_us / 1e6:.2f} s"])
-            # a light envelope for drawing: |level| over time, at most 1200 points
-            res["wave"] = raw[:20000]
+            res["wave"] = raw[:MAX_WAVE]
+        elif proto == "Princeton":
+            w = princeton_timings(_first(pairs, "Key"), _first(pairs, "Bit"), _first(pairs, "TE"))
+            if w:
+                res["wave"], res["synth"] = w, True
+        try:
+            hz = int(_first(pairs, "Frequency") or 0)
+        except ValueError:
+            hz = 0
+        res["signal"] = {"kind": "subghz", "freq": hz, "preset": PRESETS.get(preset, preset), "protocol": proto,
+                         "te": _first(pairs, "TE")}
         res["note"] = "Replaying Sub-GHz signals is done on the Flipper itself (Sub-GHz app), within your local rules."
 
     elif kind == "ir":
@@ -125,8 +240,16 @@ def parse(name, text, path=""):
                 b["detail"] = f"{proto} · address {addr} · command {cmd}"
                 if proto in IR_PROTOCOLS and addr and cmd:
                     b["tx"] = f"ir tx {proto} {addr} {cmd}"
+                w = ir_timings(proto, s.get("address", ""), s.get("command", ""))
+                if w:
+                    b["wave"], b["synth"], b["carrier"] = w, True, IR_CARRIER.get(proto)
             elif s.get("type") == "raw":
                 samples = s.get("data", "").split()
+                try:
+                    b["wave"] = [int(x) if i % 2 == 0 else -int(x) for i, x in enumerate(samples)][:MAX_WAVE]
+                    b["carrier"] = int(float(s.get("frequency", "38000")))
+                except ValueError:
+                    pass
                 freq, duty = s.get("frequency", "38000"), s.get("duty_cycle", "0.33")
                 try:
                     dc = int(round(float(duty) * 100)) if float(duty) <= 1 else int(float(duty))
@@ -139,6 +262,7 @@ def parse(name, text, path=""):
         res["title"] = "Infrared remote"
         f.append(["Buttons", str(len(buttons))])
         res["buttons"] = buttons
+        res["signal"] = {"kind": "ir"}
         res["note"] = "Send fires the button from your Flipper's IR LED, so point it at the device."
 
     elif kind == "nfc":

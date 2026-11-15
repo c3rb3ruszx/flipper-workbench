@@ -26,21 +26,31 @@ def _info(text):
     return out
 
 
+def power(p):
+    """`info power` key/values -> numbers: level %, state, voltage mV, current mA (minus = draining),
+    temp C, health %, and remaining / full / design capacity in mAh."""
+    def i(k):
+        try:
+            return int(float(p.get(k, "")))
+        except (TypeError, ValueError):
+            return None
+    return {"level": i("charge.level"), "state": p.get("charge.state"), "voltage": i("battery.voltage"),
+            "current": i("battery.current"), "temp": i("battery.temp"), "health": i("battery.health"),
+            "remain": i("capacity.remain"), "full": i("capacity.full"), "design": i("capacity.design")}
+
+
 def parse(raw):
     """{command: output} -> {heap, power, sd, uptime, app}."""
     free = raw.get("free", "")
     heap = {"free": _num(r"Free heap size:\s*(\d+)", free), "total": _num(r"Total heap size:\s*(\d+)", free),
             "min": _num(r"Minimum heap size:\s*(\d+)", free), "block": _num(r"Maximum heap block:\s*(\d+)", free)}
-    p = _info(raw.get("info power", ""))
-    level = p.get("charge.level", "")
-    power = {"level": int(level) if level.isdigit() else None, "state": p.get("charge.state"),
-             "voltage": p.get("battery.voltage"), "temp": p.get("battery.temp"), "health": p.get("battery.health")}
+    power_ = power(_info(raw.get("info power", "")))
     sd_text = raw.get("storage info /ext", "")
     sd = {"total_kib": _num(r"(\d+)\s*KiB total", sd_text), "free_kib": _num(r"(\d+)\s*KiB free", sd_text),
           "type": (re.search(r"Type:\s*(\S+)", sd_text) or [None, None])[1]}
     up = re.search(r"Uptime:\s*(\S+)", raw.get("uptime", ""))
     app = re.search(r'"([^"]+)"', raw.get("loader info", ""))
-    return {"heap": heap, "power": power, "sd": sd, "uptime": up.group(1) if up else None,
+    return {"heap": heap, "power": power_, "sd": sd, "uptime": up.group(1) if up else None,
             "app": app.group(1) if app else None}
 
 

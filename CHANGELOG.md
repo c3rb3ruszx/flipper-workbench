@@ -2,6 +2,43 @@
 
 Downloads for every version are on the [Releases](../../releases) page.
 
+## 1.14.0
+
+- **Wardrive tab**: your wardriving logs on a real map, fully offline. Import them straight from the Flipper's
+  SD card (Marauder and other wardriving apps) or from your PC (WiGLE CSV, Kismet, GPX, KML, NMEA; or drop the
+  files on the map). Every network shows on an OpenStreetMap map, colored by security, signal or type, as
+  dots, groups or a heatmap, with your route. Click one for where it was seen, where the signal was
+  strongest, its likely spot and maker. Stats for security, bands, channels, makers and names, all clickable
+  as filters; a searchable list; a replay of each drive; compare two drives. Export to WiGLE CSV, KML,
+  GeoJSON or CSV. A **home zone** leaves out everything near your home in exports and, if you like, on the
+  map. Nothing is uploaded: logs live in a local database next to Workbench.
+- **Captured handshakes**: open a `.pcap` / `.pcapng` capture and every WPA handshake (and **PMKID**) inside it
+  is filed under the network it belongs to. A capture with many handshakes is split one per access point, so a
+  big mixed file sorts itself out. The **Handshakes** panel lists them all with how complete each one is (which
+  of the four messages were caught, and whether a PMKID was seen); networks with a handshake get a ring on the
+  map and a section in their detail. Save any one back out as its own `.pcap`. It only reads and sorts the
+  frames: nothing is cracked or sent anywhere.
+- **Offline maps**: a world map is built in. For street detail, download the area your logs cover once
+  (a city is usually 10 to 30 MB) and it works offline from then on. Only the area is requested, never
+  your logs. Or use a `.pmtiles` file you already have.
+- **What changed between drives**: pick a drive and see what's new since earlier drives, what's gone (seen
+  before, you drove past, not there now), what moved (with an arrow from the old spot to the new one), what
+  was renamed and whose security changed. Click any of them to show just those on the map.
+- **Points of interest**: open WiFi, weak security, default router names, hidden networks, printers, cameras
+  and smart-home gear, phone hotspots and networks with a handshake, counted and clickable as filters.
+  Mark your own router or phone with **This is mine**: they get a filter and can be left out of exports.
+- **Drive report**: a one-page summary of a drive (or all of them) with a map, stats, points of interest,
+  what changed and the networks worth a look, saved as a web page that opens in your browser. Your home zone
+  and your own devices are left out.
+- **Dashboard** (On Flipper > Dashboard, now the first view): firmware, hardware, battery (with time to full
+  while charging), memory, SD card, apps, last backup and whether a newer firmware build is out, on one page
+  with quick buttons and a note when something needs attention. **Battery over time** keeps a reading each
+  time you plug in and every 10 minutes while plugged in, so you can see how much it drains between uses.
+- **Signal viewer** (Tools > Signal viewer, or from a `.sub` / `.ir` file in Files): zoom into the timing of a
+  Sub-GHz recording or key, or of any IR button, like a logic analyzer. Pulse lengths on hover, a histogram of
+  pulse lengths, the base unit, bursts and repeats, and a guess at the coding and the bits. Decoded IR buttons
+  (NEC, Samsung, Sony, RC5, RC6, RCA, Pioneer) and Princeton keys are drawn from their protocol. It only reads.
+
 ## 1.13.3
 
 - **Typing in text boxes** works again everywhere: in the BadUSB editor, the IR remote builder, NFC maker, speech

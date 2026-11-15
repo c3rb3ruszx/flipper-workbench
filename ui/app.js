@@ -359,6 +359,21 @@ function mockApi() {
     irb_test: async () => ({ ok: true }), irb_save: async () => ({ ok: true, path: "/ext/infrared/Living_Room.ir" }), irb_export: async () => ({ ok: true }),
     irb_learn: async (on) => { if (on) { later(900, [{ type: "irlearn", signal: { name: "", type: "parsed", protocol: "NEC", address: "04 00 00 00", command: "08 00 00 00" } }]); } else later(100, [{ type: "irlearn", done: "stopped" }]); return { ok: true }; },
     ir_files: async () => ({ files: ["/ext/infrared/TV.ir", "/ext/infrared/Soundbar.ir"] }),
+    dash_snapshot: async () => {
+      await sleep(300);
+      const now = Math.floor(Date.now() / 1000), hist = [];
+      [[6.6, 41], [5.2, 63], [4.1, 22], [2.8, 55], [1.3, 34], [0.02, 71]].forEach(([daysAgo, lvl]) => {
+        let t = now - Math.round(daysAgo * 86400), l = lvl;
+        hist.push([t, l, 1, 3800, 96, 1]);
+        for (let i = 0; i < 9 && l < 100; i++) { t += 600; l = Math.min(100, l + 6); hist.push([t, l, l >= 100 ? 2 : 1, 4000, 96, 0]); }
+      });
+      return { device: S.device, hw: { model: "Flipper Zero", hw_version: "12", region: "EuRu", color: "White", build_date: "13-11-2026", radio: "1.20", protobuf: "0.25" },
+        local: { backups: 4, last_backup: now - 19 * 86400, library: 9 }, history: hist,
+        health: { heap: { free: 98000 + Math.round(Math.random() * 20000), total: 189648, min: 25232, block: 73600 },
+          power: { level: 78, state: "charging", voltage: 4012, current: 410, temp: 29, health: 96, remain: 1638, full: 2016, design: 2100 },
+          sd: { total_kib: 7737344, free_kib: 612000, type: "FAT32" }, uptime: "3h12m", app: null } };
+    },
+    dash_fw: async () => { await sleep(600); return { known: true, latest: "mntm-dev-2b41c0a", age: "2 days ago", current: false, channel: "dev", family: "Momentum" }; },
     health_snapshot: async () => ({ heap: { free: 98000 + Math.round(Math.random() * 20000), total: 189648, min: 25232, block: 73600 }, power: { level: 87, state: "discharging", health: "100", temp: "27" }, sd: { total_kib: 7737344, free_kib: 5318592, type: "FAT32" }, uptime: "1h4m", app: null }),
     health_packs: async () => ({ active: "WatchDogs", packs: [{ name: "WatchDogs", path: "/ext/asset_packs/WatchDogs", in_use: true, total: 61000, level: "warn", anims: 9, icons: 12, fonts: 0, heaviest: [{ name: "WD_Hack", mem: 52000 }], uncompressed: 12, shrink: 0, shrink_saves: 0 }, { name: "Workbench", path: "/ext/asset_packs/Workbench", in_use: false, total: 63000, level: "warn", anims: 1, icons: 0, fonts: 0, heaviest: [{ name: "my_gif", mem: 61500 }], uncompressed: 60, shrink: 60, shrink_saves: 52000 }] }),
     health_shrink: async () => { later(600, [{ type: "finished", ok: true, quiet: true, send_only: true, hc_done: { frames: 60, saved: 52000 } }]); return { ok: true }; },
@@ -383,6 +398,11 @@ function mockApi() {
     sync_plan: async () => ({ same: 4, steps: [["upload", "new.txt", 120], ["download", "fromflipper.txt", 300], ["conflict", "both.txt", 90]] }),
     set_auto_backup: async () => ({ ok: true }),
     record_stop: async () => ({ path: "rec.gif", frames: 40, seconds: 3.2 }),
+    wd_init: async () => ({ summary: { drives: [], networks: 0 }, maps: [{ id: "world", name: "World (built in)", builtin: true, url: "vendor/map/world.pmtiles", bounds: [-180, -85, 180, 85], minzoom: 0, maxzoom: 5, size: 15056535 }], home: null, prefs: {} }),
+    wd_data: async () => ({ nets: [], tracks: {}, summary: { drives: [] }, bounds: null, shakes: [] }),
+    wd_handshakes: async () => ({ shakes: [] }),
+    wd_shake_export: async () => ({ cancelled: true }),
+    wd_maps: async () => [],
     cli_stop: async () => { mockApi.cstop = true; return { ok: true }; },
     cli_run: async (cmd) => {
       mockApi.cstop = false;
@@ -481,7 +501,7 @@ function wake() {
 }
 
 /* ---------- tabs ---------- */
-const TAB_ORDER = ["build", "library", "discover", "flipper"];
+const TAB_ORDER = ["build", "library", "discover", "flipper", "wardrive"];
 function setTab(name) {
   const prev = S.tab; S.tab = name;
   $$(".tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === name));
@@ -494,6 +514,8 @@ function setTab(name) {
   if (name === "library") loadLibrary();
   if (name === "discover") loadCatalog();
   if (name === "flipper" && prev !== "flipper") { loadFlipper(); setTimeout(() => setSub(FM.sub), 30); }
+  if (name === "wardrive" && window.WD) WD.show(); else if (prev === "wardrive" && window.WD) WD.hide();
+  if ((name === "wardrive") !== (prev === "wardrive")) setTimeout(() => moveInk($("#tabInk"), $(`.tab[data-tab="${name}"]`), true), 380);
   if (prev !== name) wake();
 }
 function moveInk(ink, btn, flat) {
@@ -586,6 +608,7 @@ function onDevice(d) {
   if (S.tab === "flipper" && (newly || (was.connected && !S.device.connected) || (!was.error && S.device.error))) {
     loadFlipper();
     if (FM.sub === "files") loadFiles("/ext");
+    if (FM.sub === "dash") dashShow();
   }
   if (!S.device.connected && MIR.state !== "off") stopMirror("Flipper unplugged");
 }
@@ -1013,10 +1036,11 @@ async function loadFlipper() {
   }
   $("#flList").innerHTML = `<div class="skeleton"><span class="blk"></span>Reading your Flipper's SD card...</div>`;
   const r = await api.flipper_list();
-  if (r.error) { FL.apps = null; FL.error = r.error; renderFlipper(); return; }
+  if (r.error) { FL.apps = null; FL.error = r.error; renderFlipper(); if (dashOpen()) dashRender(); return; }
   FL.apps = r.apps; FL.sd = r.sd; FL.error = ""; FL.animated = false;
   $("#flCount").textContent = r.apps.length || "";
   renderFlipper();
+  if (dashOpen()) dashRender();
   const todo = r.apps.filter((a) => !a.meta);
   if (todo.length && !FL.checking) {
     FL.checking = true;
@@ -1262,11 +1286,13 @@ function screenshot() {
 }
 
 /* ---------- on-flipper sub sections: apps / files / backups ---------- */
-const FM = { path: "/ext", entries: null, sub: "apps", bk: null, pick: null };
+const FM = { path: "/ext", entries: null, sub: "dash", bk: null, pick: null };
 function setSub(name) {
   FM.sub = name;
   $$("#flSeg button").forEach((b) => b.classList.toggle("on", b.dataset.sub === name));
   moveInk($("#flSegInk"), $(`#flSeg button[data-sub="${name}"]`), false);
+  $("#subDash").hidden = name !== "dash";
+  if (name === "dash") dashShow(); else clearTimeout(DASH.timer);
   $("#subApps").hidden = name !== "apps"; $("#subFiles").hidden = name !== "files"; $("#subBackups").hidden = name !== "backups";
   $("#subCli").hidden = name !== "cli";
   $("#subTools").hidden = name !== "tools"; $("#subStudio").hidden = name !== "studio";
@@ -1483,12 +1509,27 @@ async function openViewer(path, size, src) {
   $("#vwEditIr").hidden = !(r.kind === "ir" && VW.src !== "irdb");
   body.innerHTML = vwFields(r.fields || []);
   if (r.note) body.insertAdjacentHTML("beforeend", `<div class="vw-note">${esc(r.note)}</div>`);
-  if (r.wave && r.wave.length) { body.insertAdjacentHTML("beforeend", `<div class="vw-sec">Signal</div>`); body.appendChild(vwWave(r.wave)); }
+  const sigTitle = path.split("/").pop(), sigSub = VW.src === "irdb" ? `Flipper-IRDB · ${path}` : path;
+  if (r.wave && r.wave.length) {
+    body.insertAdjacentHTML("beforeend", `<div class="vw-sec">Signal${r.synth ? " <small>drawn from the key</small>" : ""}</div>`);
+    const wv = vwWave(r.wave); wv.title = "Open in the signal viewer"; wv.style.cursor = "zoom-in";
+    wv.onclick = () => SIG.open(r, { title: sigTitle, sub: sigSub });
+    body.appendChild(wv);
+    const sb = document.createElement("button"); sb.className = "mini vw-sigbtn"; sb.innerHTML = `<i data-icon="wave"></i>Signal viewer`;
+    sb.onclick = () => SIG.open(r, { title: sigTitle, sub: sigSub });
+    body.appendChild(sb);
+  }
   if (r.buttons) {
     body.insertAdjacentHTML("beforeend", `<div class="vw-sec">Buttons</div><div class="vw-btns" id="vwBtns"></div>`);
-    r.buttons.forEach((b) => {
+    r.buttons.forEach((b, bi) => {
       const row = document.createElement("div"); row.className = "vw-btn";
       row.innerHTML = `<b>${esc(b.name)}</b><span>${esc(b.detail || b.type)}</span>`;
+      if (b.wave) {
+        const sv = document.createElement("button"); sv.className = "mini"; sv.innerHTML = `<i data-icon="wave"></i>`;
+        sv.title = "Look at this button's timing in the signal viewer";
+        sv.onclick = () => SIG.open(r, { title: sigTitle, sub: sigSub, index: bi });
+        row.appendChild(sv);
+      }
       if (b.tx) {
         const go = document.createElement("button"); go.className = "mini"; go.innerHTML = `<i data-icon="play"></i>Send`;
         go.title = "Fire this button from the Flipper's IR LED";
@@ -1913,6 +1954,155 @@ async function irbSave(overwrite) {
 const HC = { pts: [], timer: 0, busy: false, total: 0 };
 const kb = (b) => (b == null ? "-" : `${Math.round(b / 1024)} KB`);
 const kbSmall = (b) => (b < 1024 ? `${b} bytes` : kb(b));
+/* ---------- Dashboard: the Flipper's state on one page ---------- */
+const DASH = { timer: 0, busy: false, last: null, fw: null, key: "", days: 7 };
+const dashOpen = () => S.tab === "flipper" && FM.sub === "dash" && !document.hidden;
+function dashShow() {
+  const live = devReady();
+  $("#dashEmpty").hidden = live; $("#dashBody").hidden = !live;
+  if (!live) { clearTimeout(DASH.timer); DASH.last = null; return; }
+  const key = `${S.device.port}|${S.device.name}|${S.device.version}`;
+  if (DASH.key !== key) { DASH.key = key; DASH.fw = null; DASH.last = null; }
+  if (!DASH.fw) { DASH.fw = { loading: true }; api.dash_fw().then((r) => { DASH.fw = r || {}; if (dashOpen()) dashRender(); }); }
+  dashRender();
+  dashTick();
+}
+function dashTick() {
+  clearTimeout(DASH.timer);
+  if (!dashOpen() || !devReady()) return;
+  dashPoll().finally(() => { if (dashOpen()) DASH.timer = setTimeout(dashTick, 30000); });
+}
+async function dashPoll() {
+  if (DASH.busy) return;
+  DASH.busy = true;
+  try { const r = await api.dash_snapshot(); if (r) { DASH.last = r; DASH.at = Date.now(); } } finally { DASH.busy = false; }
+  if (dashOpen()) dashRender();
+}
+function dashAge(ts) {
+  if (!ts) return "";
+  const d = Math.floor((Date.now() / 1000 - ts) / 86400);
+  return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`;
+}
+function dashBar(frac, cls) { return `<div class="dc-bar${cls ? " " + cls : ""}"><span style="width:${Math.max(0, Math.min(100, frac * 100)).toFixed(1)}%"></span></div>`; }
+function dashCard(id, html) { const b = $(`${id} .dc-body`); if (b) b.innerHTML = html; }
+function dashRender() {
+  const d = S.device, r = DASH.last || {}, h = r.health || {}, pw = h.power || {}, hp = h.heap || {}, sd = h.sd || {}, hw = r.hw || {}, loc = r.local || {};
+  const wait = `<div class="dc-wait">${r.busy ? "Busy with another job, back in a moment" : r.error ? esc(r.error) : "Reading..."}</div>`;
+  const facts = [["Model", hw.model], ["Hardware", hw.hw_version && "version " + hw.hw_version], ["Region", hw.region], ["Color", hw.color],
+    ["Firmware built", hw.build_date], ["Radio stack", hw.radio], ["Running for", h.uptime], ["Open now", h.app]].filter(([, v]) => v);
+  $("#dashFacts").innerHTML = facts.map(([k, v]) => `<span><small>${esc(k)}</small>${esc(v)}</span>`).join("");
+
+  // battery
+  if (pw.level != null) {
+    const st = pw.state === "charging" ? "Charging" : pw.state === "charged" ? "Full" : "On battery";
+    let eta = "";
+    if (pw.state === "charging" && pw.current > 0 && pw.full && pw.remain != null && pw.full > pw.remain) {
+      const mins = Math.round((pw.full - pw.remain) / pw.current * 60);
+      eta = mins >= 60 ? `full in about ${Math.floor(mins / 60)} h ${mins % 60} min` : `full in about ${mins} min`;
+    }
+    dashCard("#dcBattery", `<div class="dc-big">${pw.level}<small>%</small></div>${dashBar(pw.level / 100, pw.level < 20 ? "bad" : pw.level < 40 ? "warn" : "ok")}` +
+      `<div class="dc-line"><b>${st}</b>${eta ? " · " + eta : ""}</div>` +
+      `<div class="dc-kv">${[pw.voltage ? ["Voltage", (pw.voltage / 1000).toFixed(2) + " V"] : null, pw.temp != null ? ["Temperature", pw.temp + " °C"] : null,
+        pw.health != null ? ["Health", pw.health + "%"] : null, pw.full ? ["Capacity", `${pw.remain ?? "?"} of ${pw.full} mAh`] : null]
+        .filter(Boolean).map(([k, v]) => `<span><small>${k}</small>${v}</span>`).join("")}</div>`);
+  } else dashCard("#dcBattery", wait);
+  // memory
+  if (hp.free != null) {
+    dashCard("#dcMemory", `<div class="dc-big">${kb(hp.free)}<small> free</small></div>${hp.total ? dashBar(1 - hp.free / hp.total, hp.free < 40 * 1024 ? "bad" : "") : ""}` +
+      `<div class="dc-line">${hp.total ? `of ${kb(hp.total)} in use by firmware and apps` : ""}</div>` +
+      `<div class="dc-kv">${hp.min != null ? `<span><small>Lowest since restart</small>${kb(hp.min)}</span>` : ""}${hp.block ? `<span><small>Biggest free block</small>${kb(hp.block)}</span>` : ""}</div>`);
+  } else dashCard("#dcMemory", wait);
+  // SD card
+  if (sd.total_kib) {
+    const used = sd.total_kib - (sd.free_kib || 0), gb = (k) => (k / 1048576).toFixed(k > 10485760 ? 1 : 2) + " GB";
+    dashCard("#dcSd", `<div class="dc-big">${gb(sd.free_kib || 0)}<small> free</small></div>${dashBar(used / sd.total_kib, used / sd.total_kib > .9 ? "bad" : used / sd.total_kib > .75 ? "warn" : "")}` +
+      `<div class="dc-line">${gb(used)} used of ${gb(sd.total_kib)}${sd.type ? " · " + esc(sd.type) : ""}</div>` +
+      `<div class="dc-acts"><button class="mini" data-dash-go="map">See what fills it</button></div>`);
+  } else dashCard("#dcSd", wait);
+  // apps (the Apps view's own list, read when this tab opened)
+  if (FL.apps) {
+    const cats = {}; for (const a of FL.apps) cats[a.category] = (cats[a.category] || 0) + 1;
+    const top = Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    const upd = !$("#flUpdateAll").hidden ? $("#flUpdateLabel").textContent : "";
+    dashCard("#dcApps", `<div class="dc-big">${FL.apps.length}<small> installed</small></div>` +
+      `<div class="dc-chips">${top.map(([c, n]) => `<span class="chip muted">${esc(c)} ${n}</span>`).join("")}</div>` +
+      `<div class="dc-line">${loc.library != null ? `${loc.library} built on this computer` : ""}${upd ? ` · <b class="warn">${esc(upd)}</b>` : ""}</div>` +
+      `<div class="dc-acts"><button class="mini" data-dash-go="apps">Open Apps</button></div>`);
+  } else dashCard("#dcApps", FL.error ? `<div class="dc-wait">${esc(FL.error)}</div>` : `<div class="dc-wait">Reading the apps on your SD card...</div>`);
+  // backups
+  const stale = !loc.last_backup || Date.now() / 1000 - loc.last_backup > 14 * 86400;
+  dashCard("#dcBackups", loc.last_backup
+    ? `<div class="dc-big dc-mid${stale ? " warn" : ""}">${dashAge(loc.last_backup)}</div><div class="dc-line">last backup of this Flipper · ${loc.backups} kept on this computer</div>`
+    : `<div class="dc-big dc-mid warn">Never</div><div class="dc-line">No backup of this Flipper on this computer yet.</div>`) ;
+  $("#dcBackups .dc-body").insertAdjacentHTML("beforeend", `<div class="dc-acts"><button class="mini${stale ? " primary" : ""}" data-dash-go="backup">Back up now</button><button class="mini" data-dash-go="backups">See backups</button></div>`);
+  // firmware
+  const fw = DASH.fw || {};
+  dashCard("#dcFirmware", `<div class="dc-big dc-mid">${esc(d.fw_name || "Unknown")}</div><div class="dc-line mono">${esc(d.version || "")}${hw.build_date ? " · built " + esc(hw.build_date) : ""}</div>` +
+    (fw.loading ? `<div class="dc-line muted">Checking for a newer build...</div>`
+      : fw.error ? `<div class="dc-line muted">${esc(fw.error)}</div>`
+      : fw.known === false ? `<div class="dc-line muted">Workbench doesn't track updates for this firmware.</div>`
+      : fw.current ? `<div class="dc-line ok">Up to date with the latest ${esc(fw.channel || "")} build</div>`
+      : fw.latest ? `<div class="dc-line warn">Newer build out: ${esc(fw.latest)} (${esc(fw.age || "")})</div><div class="dc-acts"><button class="mini primary" data-dash-go="firmware">Update firmware</button></div>`
+      : ""));
+  // things worth a look
+  const alerts = [];
+  if (sd.total_kib && (sd.free_kib || 0) / sd.total_kib < .1) alerts.push(["bad", `SD card is ${Math.round((1 - sd.free_kib / sd.total_kib) * 100)}% full.`]);
+  if (pw.level != null && pw.level < 15 && pw.state !== "charging") alerts.push(["bad", "Battery is low."]);
+  if (pw.health != null && pw.health < 80) alerts.push(["warn", `Battery health is ${pw.health}%: it holds noticeably less than when new.`]);
+  if (pw.temp != null && pw.temp >= 45) alerts.push(["warn", `Battery is warm (${pw.temp} °C).`]);
+  if (hp.min != null && hp.min < 30 * 1024) alerts.push(["warn", `Memory got down to ${kb(hp.min)} since it restarted: close to out-of-memory crashes.`]);
+  if (stale) alerts.push(["warn", loc.last_backup ? `Last backup was ${dashAge(loc.last_backup)}.` : "This Flipper has never been backed up here."]);
+  if (fw.latest && fw.current === false) alerts.push(["info", `A newer ${esc(d.fw_name || "")} build is out.`]);
+  $("#dashAlerts").innerHTML = alerts.map(([k, t]) => `<span class="dash-alert ${k}">${t}</span>`).join("");
+  $("#dashStatus").textContent = DASH.at ? `Updated ${new Date(DASH.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · refreshes every 30 seconds while you're here` : "";
+  dashChart(r.history || []);
+  renderIcons($("#subDash"));
+}
+function dashChart(hist) {
+  const c = $("#dashChart"); if (!c) return;
+  const w = c.clientWidth, h = c.clientHeight; if (!w || !h) return;
+  const dpr = devicePixelRatio || 1; c.width = w * dpr; c.height = h * dpr;
+  const x = c.getContext("2d"); x.scale(dpr, dpr); x.clearRect(0, 0, w, h);
+  const now = Date.now() / 1000, t0 = now - DASH.days * 86400, pad = { l: 34, r: 10, t: 10, b: 22 };
+  const X = (t) => pad.l + (t - t0) / (now - t0) * (w - pad.l - pad.r), Y = (v) => pad.t + (1 - v / 100) * (h - pad.t - pad.b);
+  const cs = getComputedStyle(document.body), muted = cs.getPropertyValue("--muted").trim() || "#8a837c", line = cs.getPropertyValue("--line").trim() || "#2a2622";
+  x.font = "10px " + (cs.getPropertyValue("--mono").trim() || "monospace"); x.fillStyle = muted; x.strokeStyle = line; x.lineWidth = 1;
+  for (const v of [0, 25, 50, 75, 100]) { x.beginPath(); x.moveTo(pad.l, Y(v) + .5); x.lineTo(w - pad.r, Y(v) + .5); x.stroke(); x.fillText(v + "%", 2, Y(v) + 3); }
+  // local time ticks: every 3 hours for a day; for longer ranges a line at each local midnight, the day's name in its middle
+  x.textAlign = "center";
+  const tick = new Date(t0 * 1000);
+  if (DASH.days <= 1) {
+    tick.setMinutes(0, 0, 0); tick.setHours(Math.ceil((tick.getHours() + 1) / 3) * 3);
+    for (; tick.getTime() / 1000 <= now; tick.setHours(tick.getHours() + 3)) x.fillText(tick.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), X(tick.getTime() / 1000), h - 6);
+  } else {
+    tick.setHours(24, 0, 0, 0);
+    const every = DASH.days > 7 ? 5 : 1;
+    for (let i = 0; tick.getTime() / 1000 <= now; i++, tick.setDate(tick.getDate() + 1)) {
+      const t = tick.getTime() / 1000, mid = new Date(tick); mid.setHours(12);
+      x.beginPath(); x.moveTo(Math.round(X(t)) + .5, pad.t); x.lineTo(Math.round(X(t)) + .5, h - pad.b); x.stroke();
+      if (i % every === 0 && X(mid.getTime() / 1000) < w - pad.r - 14) x.fillText(mid.toLocaleDateString([], { weekday: "short", day: "numeric" }), X(mid.getTime() / 1000), h - 6);
+    }
+  }
+  x.textAlign = "left";
+  const pts = hist.filter((p) => p[0] >= t0);
+  // lines join readings from one plug-in session (no gap over 30 minutes)
+  x.strokeStyle = "rgba(95,221,122,.75)"; x.lineWidth = 1.6;
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i][0] - pts[i - 1][0] > 1800 || pts[i][5]) continue;
+    x.beginPath(); x.moveTo(X(pts[i - 1][0]), Y(pts[i - 1][1])); x.lineTo(X(pts[i][0]), Y(pts[i][1])); x.stroke();
+  }
+  for (const p of pts) {
+    x.beginPath();
+    if (p[5]) { x.fillStyle = "#ff8200"; x.arc(X(p[0]), Y(p[1]), 4, 0, Math.PI * 2); x.fill(); }
+    else { x.fillStyle = "rgba(95,221,122,.9)"; x.arc(X(p[0]), Y(p[1]), 1.6, 0, Math.PI * 2); x.fill(); }
+  }
+  const plugs = pts.filter((p) => p[5]);
+  const note = $("#dashChartNote");
+  if (!pts.length) { note.textContent = "Readings are taken while your Flipper is plugged in: one when you plug it in, then every 10 minutes. Over a few days this shows how much it drains between uses."; return; }
+  if (!plugs.length) { note.innerHTML = `<i class="dot ok"></i>Charge while plugged in. The orange plug-in readings (how full it was when you plugged it in) appear from your next plug-in.`; return; }
+  const avg = Math.round(plugs.reduce((a, p) => a + p[1], 0) / plugs.length), low = plugs.reduce((a, p) => (p[1] < a[1] ? p : a));
+  note.innerHTML = `<i class="dot plug"></i>Plugged in at <b>${avg}%</b> on average${plugs.length > 1 ? `, lowest <b>${low[1]}%</b> on ${esc(new Date(low[0] * 1000).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }))}` : ""} · <i class="dot ok"></i>charging while plugged in`;
+}
 function hcOpen() { const t = $('.tool[data-tool="health"]'); return !!t && t.open && S.tab === "flipper" && FM.sub === "tools" && !document.hidden; }
 function hcDraw() {
   const cv = $("#hcGraph"), ctx = cv.getContext("2d"), w = cv.width, h = cv.height, pts = HC.pts;
@@ -3114,6 +3304,7 @@ function onEvents(batch) {
       case "select": openPicker(e.apps); break;
       case "batch": S.batch = e; S.progress = 0; renderShelf(); break;
       case "device": onDevice(e.device); break;
+      case "wd": if (window.WD) WD.onEvent(e); break;
       case "fmeta": {
         const a = FL.apps && FL.apps.find((x) => x.path === e.path);
         if (a) a.meta = e.meta;
@@ -3498,6 +3689,29 @@ function bind() {
     MK.dirty = false; mkStatus(`Saved ${r.count} keys to the Flipper`);
   };
   $("#flFirmware").onclick = openFirmware;
+  // dashboard
+  const dashGo = async (what) => {
+    if (what === "backup") { setSub("backups"); bkNew(); }
+    else if (what === "backups") setSub("backups");
+    else if (what === "apps") setSub("apps");
+    else if (what === "map") $("#flMap").click();
+    else if (what === "firmware") openFirmware();
+    else if (what === "health") { setSub("tools"); const t = $('.tool[data-tool="health"]'); if (t) { t.open = true; setTimeout(() => t.scrollIntoView({ behavior: "smooth", block: "start" }), 60); } }
+    else if (what === "restart") {
+      if (!needDevice()) return;
+      if (await confirmDialog("Restart your Flipper now?", "It restarts in a few seconds and reconnects on its own. Anything open on it closes.", "Restart")) { await api.flipper_restart(); toast("Restarting your Flipper"); }
+    }
+  };
+  $("#dashBackup").onclick = () => dashGo("backup");
+  $("#dashHealth").onclick = () => dashGo("health");
+  $("#dashFwBtn").onclick = () => dashGo("firmware");
+  $("#dashRestart").onclick = () => dashGo("restart");
+  $("#subDash").addEventListener("click", (e) => { const b = e.target.closest("[data-dash-go]"); if (b) dashGo(b.dataset.dashGo); });
+  $$("#dashRange button").forEach((b) => b.onclick = () => {
+    DASH.days = +b.dataset.days; $$("#dashRange button").forEach((x) => x.classList.toggle("on", x === b));
+    dashChart((DASH.last || {}).history || []);
+  });
+  new ResizeObserver(() => { if (dashOpen()) dashChart((DASH.last || {}).history || []); }).observe($("#dashChart"));
   $("#fmNewFile").onclick = () => (devReady() ? fmNewFile() : needDevice());
   $("#cliStop").onclick = () => api.cli_stop();
   $("#cliClear").onclick = () => { $("#cliOut").innerHTML = ""; $("#cliInput").focus(); };
@@ -3575,15 +3789,18 @@ function bind() {
     e.preventDefault();
     if (bdOpen() && [...e.dataTransfer.types].includes("Files")) { $("#bdBody").classList.add("drop"); return; }   // firmware for the dev board
     if (anOpen() && [...e.dataTransfer.types].includes("Files")) { $("#anDrop").classList.add("drop"); return; }   // a video or picture to convert
+    if (S.tab === "wardrive" && [...e.dataTransfer.types].includes("Files")) { $("#wdMapWrap").classList.add("drop"); return; }   // wardrive logs
     dragDepth++; $("#drop").classList.add("on");
   });
-  window.addEventListener("dragleave", (e) => { if (!e.relatedTarget) $("#anDrop").classList.remove("drop"); if (--dragDepth <= 0) { dragDepth = 0; $("#drop").classList.remove("on"); } });
+  window.addEventListener("dragleave", (e) => { if (!e.relatedTarget) { $("#anDrop").classList.remove("drop"); $("#wdMapWrap").classList.remove("drop"); } if (--dragDepth <= 0) { dragDepth = 0; $("#drop").classList.remove("on"); } });
   window.addEventListener("dragover", (e) => e.preventDefault());
   window.addEventListener("drop", (e) => {
     e.preventDefault(); dragDepth = 0; $("#drop").classList.remove("on");
     if (bdOpen() && e.dataTransfer.files && e.dataTransfer.files.length) { $("#bdBody").classList.remove("drop"); bdDropFile(e.dataTransfer.files[0]); return; }
     $("#anDrop").classList.remove("drop");
     if (anOpen() && e.dataTransfer.files && e.dataTransfer.files.length) { anDropFile(e.dataTransfer.files[0]); return; }
+    $("#wdMapWrap").classList.remove("drop");
+    if (S.tab === "wardrive" && e.dataTransfer.files && e.dataTransfer.files.length) { WD.drop([...e.dataTransfer.files]); return; }
     const t = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
     if (t && t.includes("github.com")) { setTab("build"); $("#url").value = t.split("\n")[0].trim(); renderPreview(); LCD.poke(); toast("Link dropped"); }
     else toast("That's not a GitHub link");
@@ -3620,6 +3837,8 @@ async function boot() {
   moveInk($("#tabInk"), $(".tab.on"), true);
   renderShelf();
   bind();
+  if (window.WD) WD.init(api, { toast, confirmDialog, promptDialog, renderIcons: window.renderIcons, needDevice });
+  if (window.SIG) SIG.init(api, { toast, renderIcons: window.renderIcons });
   if (info.device) onDevice(info.device);
   if (info.clipboard) { $("#url").value = info.clipboard; S.lastClip = info.clipboard; }
   await lcdReady;
@@ -3634,7 +3853,15 @@ async function boot() {
 
 window.fb = { onEvents, onFrame, LCD, S, MIR, FM, openViewer };
 let started = false;
+// dev only: tools/dev_server.py serves this page with the real Python Api behind /api (open with ?devapi)
+function devApi() {
+  setInterval(async () => {
+    const r = await fetch("/__events").then((x) => x.json()).catch(() => []);
+    for (const js of r) { try { (0, eval)(js); } catch (e) { console.error(e); } }
+  }, 300);
+  return new Proxy({}, { get: (_, name) => (...args) => fetch("/api/" + String(name), { method: "POST", body: JSON.stringify(args) }).then((x) => x.json()) });
+}
 function start(a) { if (started) return; started = true; api = a; boot(); }
 window.addEventListener("pywebviewready", () => start(window.pywebview.api));
-setTimeout(() => { if (!started) start(window.pywebview ? window.pywebview.api : mockApi()); }, 700);
+setTimeout(() => { if (!started) start(window.pywebview ? window.pywebview.api : location.search.includes("devapi") ? devApi() : mockApi()); }, 700);
 })();

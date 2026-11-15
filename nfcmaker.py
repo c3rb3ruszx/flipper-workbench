@@ -127,7 +127,7 @@ def geo_record(lat, lon):
     try:
         lat, lon = float(lat), float(lon)
     except (TypeError, ValueError):
-        raise NfcError("Enter a latitude and longitude, like 33.8938 and 35.5018.")
+        raise NfcError("Enter a latitude and longitude, like 48.8584 and 2.2945.")
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         raise NfcError("Latitude goes from -90 to 90, longitude from -180 to 180.")
     return uri_record(f"geo:{lat:.6f},{lon:.6f}")
