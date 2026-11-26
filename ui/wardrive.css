@@ -237,3 +237,12 @@ body.wd-wide .grid > .device { display: none; }
   animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 4px; }
 
 @media (max-width: 1100px) { .wd-main { grid-template-columns: 1fr 290px; } }
+
+/* security audit */
+.wd-audit { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 2px; }
+.wd-audhead { display: flex; align-items: center; gap: 8px; }
+.wd-grade { font: 700 11px var(--px); text-transform: uppercase; letter-spacing: .6px; color: #140d07; padding: 3px 8px; border-radius: 6px; }
+.wd-audhl { font-size: 13px; font-weight: 600; color: var(--text); }
+.wd-find { border-left: 3px solid var(--muted); background: #17110b; border-radius: 0 8px 8px 0; padding: 7px 10px; }
+.wd-findt { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--text); }
+.wd-findd { font-size: 12.5px; line-height: 1.45; color: var(--muted); margin-top: 3px; }

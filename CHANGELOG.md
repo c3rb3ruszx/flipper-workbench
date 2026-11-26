@@ -2,6 +2,21 @@
 
 Downloads for every version are on the [Releases](../../releases) page.
 
+## 1.15.0
+
+- **Sub-GHz library** (On Flipper > Tools): every `.sub` file on your Flipper in one place, grouped by folder
+  and tagged **Fixed**, **Rolling** or **Raw**, so you can see at a glance which recordings work as a lasting
+  clone and which only trigger something once. Each shows its frequency and protocol. Tick the ones you want
+  and back them up to a folder on your PC, keeping their subfolders. It only reads and copies: it never
+  transmits and never changes anything on the Flipper.
+- **Security audit** (Wardrive): pick any network and press **Security audit** for a plain-English verdict,
+  graded from Critical to Good. It covers the encryption, whether WPS is on, a hidden or factory-default name,
+  whether a handshake was recorded, and channel or band notes, each with what to do about it. Defensive only:
+  it judges from what the scan saw and never cracks anything.
+- **GPS gaps** (Wardrive): a new **Gaps** button marks the spots along your route where the GPS dropped out,
+  so you can see which stretches of a drive have missing coverage.
+- **KMZ export** (Wardrive): export the networks on the map as one compact **KMZ** file for Google Earth.
+
 ## 1.14.0
 
 - **Wardrive tab**: your wardriving logs on a real map, fully offline. Import them straight from the Flipper's

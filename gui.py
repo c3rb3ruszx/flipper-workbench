@@ -893,6 +893,67 @@ class Api:
         except (fb.BuildError, device.DeviceError) as e:
             return {"error": str(e)}
 
+    # ------------------------------------------------ tools: Sub-GHz library (read-only + backup to PC)
+    SUB_READ_MAX = 24 * 1024          # read files up to this to classify; bigger ones (raw captures) are summarized
+
+    def sub_scan(self):
+        """List every .sub file on the Flipper with its frequency, protocol and whether it's a fixed or rolling
+        code. Read-only: it never transmits and never changes anything on the device."""
+        import device
+        import capture
+        root = "/ext/subghz"
+        try:
+            port, sdk = self._port(), fb.sdk_dirs()
+            files = device.storage_call(port, sdk, lambda mod, st: device._walk(st, root))
+            subs = [(p, s) for p, s in files if p.lower().endswith(".sub")]
+            small = [{"path": p, "size": s} for p, s in subs if s <= self.SUB_READ_MAX]
+            texts = {}
+            if small:
+                device.read_many(port, sdk, small, lambda it, data: texts.__setitem__(it["path"], data))
+            out = []
+            for p, s in subs:
+                rel = p[len(root) + 1:]
+                folder, _, name = rel.rpartition("/")
+                rec = {"path": p, "name": name[:-4] if name.lower().endswith(".sub") else name,
+                       "folder": folder or "(top level)", "size": s}
+                if p in texts and texts[p]:
+                    rec.update(capture.subghz_summary(texts[p].decode("utf-8", "replace"), p))
+                else:
+                    rec.update({"type": "raw" if s > self.SUB_READ_MAX else "unknown", "protocol": "RAW" if s > self.SUB_READ_MAX else "?",
+                                "freq_mhz": "", "preset": "", "note": "Large raw capture, not read in full." if s > self.SUB_READ_MAX else "Couldn't read the file."})
+                out.append(rec)
+            out.sort(key=lambda r: (r["folder"].lower(), r["name"].lower()))
+            return {"root": root, "files": out, "count": len(out)}
+        except (fb.BuildError, device.DeviceError) as e:
+            return {"error": str(e)}
+
+    def sub_backup(self, paths):
+        """Copy the chosen .sub files from the Flipper to a folder on this PC, keeping their subfolders.
+        Read-only on the Flipper."""
+        import device
+        paths = [p for p in (paths or []) if isinstance(p, str) and p.startswith("/ext/subghz/") and p.lower().endswith(".sub")]
+        if not paths:
+            return {"error": "No Sub-GHz files selected."}
+        dest = self._pick(folder=True)
+        if not dest:
+            return {"cancelled": True}
+        base = Path(dest) / ("flipper-subghz-" + time.strftime("%Y%m%d"))
+        try:
+            port, sdk = self._port(), fb.sdk_dirs()
+            items = [{"path": p, "size": 0} for p in paths]
+            saved = [0]
+
+            def on_file(it, data):
+                rel = it["path"][len("/ext/subghz/"):]
+                out = base / rel
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(data)
+                saved[0] += 1
+            device.read_many(port, sdk, items, on_file)
+            return {"ok": True, "count": saved[0], "path": str(base)}
+        except (fb.BuildError, device.DeviceError) as e:
+            return {"error": str(e)}
+
     # ------------------------------------------------ tools: file pickers
     def _pick(self, file_types=(), folder=False):
         import webview
@@ -3272,11 +3333,11 @@ class Api:
     def wd_export(self, fmt, ids):
         import webview
         ext = {"wigle": ("csv", "WiGLE CSV (*.csv)"), "csv": ("csv", "CSV (*.csv)"), "kml": ("kml", "Google Earth KML (*.kml)"),
-               "geojson": ("geojson", "GeoJSON (*.geojson)")}.get(fmt)
+               "kmz": ("kmz", "Google Earth KMZ (*.kmz)"), "geojson": ("geojson", "GeoJSON (*.geojson)")}.get(fmt)
         if not ext:
             return {"error": "Unknown format"}
         try:
-            text, count, hidden = self._wd().export(fmt, ids, self._wd().get("home"))
+            text, count, hidden = self._wd().export("kml" if fmt == "kmz" else fmt, ids, self._wd().get("home"))
         except Exception as e:  # noqa: BLE001
             return {"error": f"Couldn't export: {e}"}
         if not count:
@@ -3291,7 +3352,12 @@ class Api:
         out = Path(res[0] if isinstance(res, (list, tuple)) else res)
         if out.suffix.lower() != "." + ext[0]:
             out = out.with_suffix("." + ext[0])
-        out.write_text(text, encoding="utf-8", newline="\n")
+        if fmt == "kmz":
+            import zipfile
+            with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:   # a KMZ is just a zipped doc.kml
+                z.writestr("doc.kml", text)
+        else:
+            out.write_text(text, encoding="utf-8", newline="\n")
         return {"ok": True, "path": str(out), "count": count, "hidden": hidden}
 
     # captured handshakes (each EAPOL handshake filed under its access point)

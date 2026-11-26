@@ -1050,3 +1050,22 @@ body.mirroring .scr-btn i { color: var(--orange); }
 .dash-chartnote .dot.ok { background: var(--ok); }
 .dash-chartnote b { color: var(--text); }
 .dash-status { font-size: 11.5px; color: var(--dim); text-align: right; }
+
+/* Sub-GHz library */
+.subs-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 0 2px; }
+.subs-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.sw-fixed, .sw-tag.sw-fixed { background: #ff5a4f; }
+.sw-rolling, .sw-tag.sw-rolling { background: #5fdd7a; }
+.sw-raw, .sw-tag.sw-raw { background: #ffc247; }
+.sw-unknown, .sw-tag.sw-unknown { background: #9aa3ad; }
+.subs-list { display: flex; flex-direction: column; gap: 10px; max-height: 360px; overflow: auto; margin: 8px 0; }
+.subs-group { display: flex; flex-direction: column; }
+.subs-gh { font: 600 11.5px var(--px); text-transform: uppercase; letter-spacing: .6px; color: var(--muted); padding: 2px 2px 5px; }
+.subs-gh small { color: var(--orange-2); margin-left: 4px; }
+.subs-row { display: grid; grid-template-columns: 18px 1fr auto auto; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: #17110b; cursor: pointer; }
+.subs-row + .subs-row { margin-top: 5px; }
+.subs-row:hover { border-color: var(--orange-deep); }
+.subs-name { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subs-meta { font: 11.5px var(--mono); color: var(--muted); white-space: nowrap; }
+.sw-tag { font: 700 10px var(--px); text-transform: uppercase; letter-spacing: .5px; color: #140d07; padding: 2px 7px; border-radius: 5px; }

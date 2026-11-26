@@ -17,6 +17,46 @@ PRESETS = {
 }
 IR_PROTOCOLS = {"NEC", "NECext", "NEC42", "NEC42ext", "Samsung32", "RC6", "RC5", "RC5X", "SIRC", "SIRC15",
                 "SIRC20", "Kaseikyo", "RCA", "Pioneer"}
+
+# Sub-GHz protocols that use a rolling (hopping) code: a captured copy opens the target at most once and
+# then desyncs, so a saved replay is not a working clone. Names as Flipper writes them in the .sub Protocol field.
+SUBGHZ_ROLLING = {"KeeLoq", "Star Line", "Starline", "AN-Motors", "AN_Motors", "Alutech", "Nice FloR-S",
+                  "Nice Flor S", "CAME Atomo", "Hormann BiSecur", "Honda", "FAAC SLH", "FAAC_SLH", "Keeloq",
+                  "Security+ 2.0", "Security+2.0", "Somfy Telis", "Somfy Keytis", "Chamberlain Code"}
+# Fixed-code protocols: the same signal every press, so a saved copy keeps working as a clone.
+SUBGHZ_FIXED = {"Princeton", "CAME", "CAME TWEE", "NICE FLO", "Nice Flo", "Holtek", "Holtek HT12X", "Linear",
+                "Linear Delta3", "Chamberlain", "Gate-TX", "GateTX", "SMC5326", "PT2260", "Hollarm", "Megacode",
+                "Ansonic", "Doitrand", "KIA", "Keeloq (fixed)", "BETT", "Clemsa", "Intertechno_V3", "Airforce",
+                "Marantec", "Power Smart", "Honeywell", "MagellanTech", "Kinggates Stylo4k", "Normstahl",
+                "Somfy fixed", "Dooya", "SMC", "RAW2"}
+
+
+def subghz_kind(protocol, has_raw=False):
+    """Classify a .sub Protocol as 'rolling', 'fixed', 'raw' or 'unknown', with a plain-English note."""
+    p = (protocol or "").strip()
+    if p in SUBGHZ_ROLLING:
+        return "rolling", "Rolling code: the signal changes every press, so a saved copy opens it at most once, not a lasting clone."
+    if p in SUBGHZ_FIXED:
+        return "fixed", "Fixed code: the same signal every time, so a saved copy keeps working as a clone."
+    if p == "RAW" or (not p or p == "?") and has_raw:
+        return "raw", "Raw capture: replayable as recorded. It works like a clone only if the device itself uses a fixed code."
+    return "unknown", "Unrecognised protocol; can't tell if it's fixed or rolling from the file alone."
+
+
+def subghz_summary(text, path=""):
+    """Quick facts for the Sub-GHz library from a .sub file's text: frequency, modulation, protocol, type."""
+    pairs = _pairs(text)
+    proto = _first(pairs, "Protocol") or ""
+    preset = _first(pairs, "Preset") or ""
+    has_raw = any(k == "RAW_Data" for k, _ in pairs)
+    kind, note = subghz_kind(proto, has_raw)
+    hz = 0
+    try:
+        hz = int(_first(pairs, "Frequency") or 0)
+    except ValueError:
+        hz = 0
+    return {"freq": hz, "freq_mhz": _mhz(_first(pairs, "Frequency")), "preset": PRESETS.get(preset, preset or ""),
+            "protocol": proto or ("RAW" if has_raw else "?"), "type": kind, "note": note}
 TEXT_EXT = {".txt", ".js", ".fmf", ".log", ".md", ".csv", ".json", ".ini", ".cfg", ".conf", ".sub", ".ir",
             ".nfc", ".rfid", ".ibtn", ".u2f", ".fff", ".keys", ".dict", ".ducky", ".bad", ".xml", ".html", ".yml"}
 MAX_VIEW = 512 * 1024

@@ -64,13 +64,14 @@ const WD = {
   nets: [], tracks: {}, drives: [], dmap: {}, maps: [], home: null, prefs: {}, bounds: null, shakes: [], summary: null,
   watch: [], watchSet: new Set(), poiCache: new Map(), chgData: {}, chgPick: "",
   f: { q: "", kind: "all", sec: new Set(), band: new Set(), drive: "all", maker: "", cmp: null, chg: null, poi: "" },
-  side: "overview", sel: null, list: { sort: "rssi", limit: 300 },
+  side: "overview", sel: null, auditOn: false, list: { sort: "rssi", limit: 300 },
   map: null, L: {}, base: [], replay: null, settingHome: false, dl: null, cmpPick: { a: "", b: "" },
 };
 window.WD = WD;
 
 /* ===================================================================== boot */
 WD.init = function (api, fb) { WD.api = api; WD.fb = fb; };
+WD.audit = auditNet;   // security diagnosis for one network; also lets the audit be unit-tested headless
 WD.show = async function () {
   document.body.classList.add("wd-wide");
   if (!WD.inited) {
@@ -201,6 +202,7 @@ function draw() {
   WD.F = filtered();
   clearLayers(["home"]);
   if (WD.prefs.route) drawRoutes();
+  if (WD.prefs.gaps) drawGaps();
   const mode = WD.prefs.mode;
   if (mode === "heat") drawHeat();
   else if (mode === "cluster") drawClusters();
@@ -264,6 +266,27 @@ function drawRoutes() {
   }
   WD.L.route = g.addTo(WD.map);
 }
+function drawGaps() {          // mark where the GPS dropped out: an unusually long hop between recorded points
+  const L = window.L, g = L.layerGroup();
+  const ids = WD.f.cmp ? [WD.f.cmp.a, WD.f.cmp.b] : WD.f.drive !== "all" ? [WD.f.drive] : Object.keys(WD.tracks);
+  let n = 0;
+  for (const id of ids) {
+    const t = WD.tracks[id]; if (!t || t.length < 2) continue;
+    for (let i = 1; i < t.length; i++) {
+      const d = dist(t[i - 1][0], t[i - 1][1], t[i][0], t[i][1]);
+      if (d > 150 && d <= 1500) {                 // below 150 m is normal spacing; above 1500 m is a session break
+        if (WD.home && WD.home.on && WD.home.hide && (inHome(t[i - 1][0], t[i - 1][1]) || inHome(t[i][0], t[i][1]))) continue;
+        L.polyline([t[i - 1], t[i]], { color: "#ff5a4f", weight: 2, opacity: .8, dashArray: "3 5", interactive: false }).addTo(g);
+        const mid = [(t[i - 1][0] + t[i][0]) / 2, (t[i - 1][1] + t[i][1]) / 2];
+        L.circleMarker(mid, { radius: 4, color: "#ff5a4f", weight: 1.5, fillColor: "#2a0f0b", fillOpacity: 1 })
+          .bindTooltip(`GPS gap, about ${fmtM(d)} with nothing logged`, { className: "wd-tip" }).addTo(g);
+        n++;
+      }
+    }
+  }
+  WD.L.gaps = g.addTo(WD.map);
+  $("#wdGapInfo") && ($("#wdGapInfo").textContent = n ? `${n} GPS gap${n === 1 ? "" : "s"}` : "no GPS gaps");
+}
 function drawMoves() {         // old spot (hollow) -> new spot, for networks that moved between drives
   const L = window.L, c = WD.chgData[WD.f.chg.did]; if (!c || !c.moved) return;
   const g = L.layerGroup();
@@ -295,7 +318,7 @@ function drawHome() {
 async function select(id) {
   const d = await WD.api.wd_net(id);
   if (d.error) { WD.fb.toast(d.error); return; }
-  WD.sel = d; WD.side = "net";
+  WD.sel = d; WD.side = "net"; WD.auditOn = false;
   drawSel(); renderSide(true);
 }
 function drawSel() {
@@ -317,6 +340,59 @@ function zoomToSel() {
   const d = WD.sel; if (!d) return;
   const pts = d.sightings.map((s) => [s[2], s[3]]).concat([[d.lat, d.lon]]);
   WD.map.fitBounds(pts, { padding: [60, 60], maxZoom: 18 });
+}
+
+/* ===================================================================== security audit */
+const AUDIT_LVL = {
+  critical: { label: "Critical", color: "#ff5a4f", rank: 4 },
+  weak: { label: "Weak", color: "#ff8200", rank: 3 },
+  fair: { label: "Fair", color: "#ffc247", rank: 2 },
+  good: { label: "Good", color: "#5fdd7a", rank: 1 },
+  info: { label: "Note", color: "#9aa3ad", rank: 0 },
+};
+function hasWPS(d) { return /(^|[^A-Z])WPS([^A-Z]|$)/i.test(d.auth || ""); }
+// Judge one network from what a wardrive scan can see. Defensive only: it never cracks or extracts anything.
+function auditNet(d) {
+  const f = [];
+  const add = (lvl, title, detail) => f.push({ lvl, title, detail });
+  if (d.kind !== "wifi") {
+    add("info", "Not a WiFi network", `This is ${(KIND[d.kind] || {}).label || d.kind}. How well it's secured depends on the device itself and can't be told from a wardrive scan.`);
+    return gradeAudit(f);
+  }
+  switch (d.sec) {
+    case "open": add("critical", "No password", "The network is open. Anyone in range can join it and read any traffic that isn't itself encrypted. If it's yours, put a WPA2 or WPA3 password on it."); break;
+    case "wep": add("critical", "WEP encryption", "WEP has been broken for years and can be cracked in minutes. Treat it as having no protection and switch the router to WPA2 or WPA3."); break;
+    case "wpa": add("weak", "Original WPA (TKIP)", "The first version of WPA uses TKIP, which is deprecated and has known weaknesses. Move to WPA2 or WPA3 in the router settings."); break;
+    case "wpa2": add("good", "WPA2", "WPA2 is the common modern standard and is fine for most uses. Its one soft spot: a short or common password can be guessed offline from a captured handshake. Use a long random passphrase, and turn on WPA3 if the router offers it."); break;
+    case "wpa3": add("good", "WPA3", "WPA3 is the current standard. Its SAE handshake resists the offline password guessing that WPA2 is open to. Nothing to change."); break;
+    case "ent": add("good", "Enterprise (802.1X)", "Each user authenticates separately instead of sharing one WiFi password. This is the strongest common setup."); break;
+    default: add("info", "Unknown encryption", "The capture didn't record a clear encryption type for this network, so its protection can't be judged.");
+  }
+  if (hasWPS(d)) add("weak", "WPS is on", "WPS lets devices join with an 8-digit PIN, and on many routers that PIN can be brute-forced in hours (the Pixie Dust attack), which hands over the WiFi password no matter how strong it is. Turn WPS off in the router settings.");
+  if (!d.ssid) add("info", "Hidden network", "This network hides its name. That adds almost no real security (the name still leaks when a device connects) and makes your own devices call out for it constantly, which is worse for privacy.");
+  if (DEFAULT_RE.test(d.ssid || "")) add("fair", "Factory-default name", "The name looks like the one it shipped with. Routers left on their default name often still have the default admin password and PIN. If it's yours, change the WiFi name, the admin password, and turn WPS off.");
+  if ((d.shakes || []).some((x) => x.complete || x.pmkid) && (d.sec === "wpa" || d.sec === "wpa2")) add("info", "A handshake was recorded", "On one of your drives a WPA handshake for this network was seen. Someone who captured the same thing could try to guess the password offline. A long random passphrase, or WPA3, makes that pointless. This tool only notes it happened, it never extracts or cracks anything.");
+  if (d.band === "2.4" && d.channel && ![1, 6, 11].includes(d.channel)) add("info", "Overlapping 2.4 GHz channel", `On 2.4 GHz, channel ${d.channel} overlaps its neighbours. Only channels 1, 6 and 11 don't overlap, so one of those is usually faster and steadier. A tuning nicety, not a risk.`);
+  if (d.band === "6") add("good", "6 GHz band", "6 GHz (WiFi 6E/7) requires WPA3, so this network is on modern security by design.");
+  if (d.maker === "Random address") add("info", "Randomized address", "This device uses a randomized MAC address, a privacy feature. It can't be reliably tracked across sessions, by you or anyone else.");
+  return gradeAudit(f);
+}
+function gradeAudit(f) {
+  const worst = f.reduce((a, x) => Math.max(a, AUDIT_LVL[x.lvl].rank), 0);
+  let g = Object.keys(AUDIT_LVL).find((k) => AUDIT_LVL[k].rank === worst) || "info";
+  if (worst === 1) g = "good";          // only "good" + "info" notes -> a clean pass
+  const headline = { critical: "Serious weakness.", weak: "A weak spot worth fixing.", fair: "Okay, but could be tighter.", good: "Looks solid.", info: "" }[g];
+  f.sort((a, b) => AUDIT_LVL[b.lvl].rank - AUDIT_LVL[a.lvl].rank);
+  return { grade: g, headline, findings: f };
+}
+function auditBlock(d) {
+  const a = auditNet(d), gl = AUDIT_LVL[a.grade];
+  return `<div class="wd-audit">` +
+    `<div class="wd-audhead"><span class="wd-grade" style="background:${gl.color}">${gl.label}</span><span class="wd-audhl">${esc(a.headline)}</span></div>` +
+    a.findings.map((x) => `<div class="wd-find" style="border-color:${AUDIT_LVL[x.lvl].color}">` +
+      `<div class="wd-findt"><i class="wd-dot" style="background:${AUDIT_LVL[x.lvl].color}"></i>${esc(x.title)}</div>` +
+      `<div class="wd-findd">${esc(x.detail)}</div></div>`).join("") +
+    `<div class="wd-note small">Judged only from what this scan saw: encryption type, WPS flag, name and band. It can't see the password or the router's admin settings, and it never cracks anything.</div></div>`;
 }
 
 /* ===================================================================== side panel */
@@ -442,9 +518,11 @@ function sideNet() {
     row("Strongest", d.best_rssi == null ? "" : `${d.best_rssi} dBm${best ? " at " + esc(best[0].slice(11)) : ""}`) +
     row("Likely spot", `<span class="mono">${d.lat.toFixed(5)}, ${d.lon.toFixed(5)}</span>`) + `</div>` +
     `<div class="wd-note small">The likely spot is the signal-weighted middle of the strongest sightings. Lines on the map go from each sighting to it, colored by signal.</div>` +
-    `<div class="wd-acts"><button class="mini" id="wdZoomSel"><i data-icon="search"></i>Zoom to it</button>` +
+    `<div class="wd-acts"><button class="mini${WD.auditOn ? " on" : ""}" id="wdAudit"><i data-icon="pulse"></i>Security audit</button>` +
+    `<button class="mini" id="wdZoomSel"><i data-icon="search"></i>Zoom to it</button>` +
     `<button class="mini" id="wdCopyMac"><i data-icon="copy"></i>Copy MAC</button>` +
     `<button class="mini${WD.watchSet.has(d.mac) ? " on" : ""}" id="wdMine" title="Mark your own router, phone or gadgets: they get a filter and can be left out of exports">${WD.watchSet.has(d.mac) ? "Mine ✓" : "This is mine"}</button></div>` +
+    (WD.auditOn ? auditBlock(d) : "") +
     `<div class="wd-h">Drives</div><div class="wd-note small">${dr.map(esc).join(", ")}</div>` +
     ((d.shakes && d.shakes.length) ? `<div class="wd-h">Captured handshakes <small>${d.shakes.length}</small></div>` +
       `<div class="wd-list">` + d.shakes.map((x) => `<div class="wd-shake${(x.complete || x.pmkid) ? " done" : ""}">` +
@@ -586,6 +664,7 @@ function bindSide(box) {
   const sort = $("#wdSort", box); if (sort) sort.onchange = () => { WD.list.sort = sort.value; WD.list.limit = 300; renderSide(); };
   const more = $("#wdMore", box); if (more) more.onclick = () => { WD.list.limit += 300; renderSide(); };
   const back = $("#wdBack", box); if (back) back.onclick = () => { WD.side = WD.lastSide || "overview"; WD.sel = null; drawSel(); renderSide(); };
+  const au = $("#wdAudit", box); if (au) au.onclick = () => { WD.auditOn = !WD.auditOn; renderSide(); };
   const z = $("#wdZoomSel", box); if (z) z.onclick = zoomToSel;
   const cm = $("#wdCopyMac", box); if (cm) cm.onclick = async () => { await WD.api.copy(WD.sel.mac); WD.fb.toast("MAC copied"); };
   // points of interest + my devices
@@ -680,6 +759,7 @@ function renderLegend() {
   $$("#wdLayers [data-mode]").forEach((b) => b.classList.toggle("on", b.dataset.mode === WD.prefs.mode));
   $$("#wdLayers [data-color]").forEach((b) => b.classList.toggle("on", b.dataset.color === c));
   $("#wdRouteBtn").classList.toggle("on", WD.prefs.route);
+  $("#wdGapBtn").classList.toggle("on", !!WD.prefs.gaps);
   $("#wdLayers [data-color]").parentElement.classList.toggle("off", WD.prefs.mode === "heat");
   if (WD.prefs.mode === "heat") { box.innerHTML = `<span class="wd-heatkey"></span><span>fewer</span><span>more networks</span>`; return; }
   let items;
@@ -688,7 +768,7 @@ function renderLegend() {
   else items = Object.entries(SEC).filter(([k]) => (WD.F || []).some((n) => n[I.sec] === k)).map(([, v]) => [v.color, v.label]);
   box.innerHTML = items.map(([col, l]) => `<span><i class="wd-dot" style="background:${col}"></i>${esc(l)}</span>`).join("");
 }
-function savePrefs() { WD.api.wd_set("prefs", { color: WD.prefs.color, mode: WD.prefs.mode, route: WD.prefs.route, area: WD.prefs.area, mineOut: !!WD.prefs.mineOut }); }
+function savePrefs() { WD.api.wd_set("prefs", { color: WD.prefs.color, mode: WD.prefs.mode, route: WD.prefs.route, gaps: !!WD.prefs.gaps, area: WD.prefs.area, mineOut: !!WD.prefs.mineOut }); }
 
 /* ===================================================================== importing */
 async function importFromPc() {
@@ -1107,6 +1187,7 @@ function bind() {
   $$("#wdLayers [data-mode]").forEach((b) => b.onclick = () => { WD.prefs.mode = b.dataset.mode; savePrefs(); draw(); });
   $$("#wdLayers [data-color]").forEach((b) => b.onclick = () => { WD.prefs.color = b.dataset.color; savePrefs(); draw(); });
   $("#wdRouteBtn").onclick = () => { WD.prefs.route = !WD.prefs.route; savePrefs(); draw(); };
+  $("#wdGapBtn").onclick = () => { WD.prefs.gaps = !WD.prefs.gaps; savePrefs(); draw(); };
   $("#wdFitBtn").onclick = fitAll;
   $("#wdExportBtn").onclick = (e) => { e.stopPropagation(); const m = $("#wdExportMenu"); m.hidden = !m.hidden;
     $("#wdExportNote").textContent = `${fmtN((WD.F || []).length)} networks (what the map shows now)` + (WD.home && WD.home.on ? ". Home zone left out." : ""); };

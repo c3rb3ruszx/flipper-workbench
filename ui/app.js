@@ -424,6 +424,15 @@ function mockApi() {
     files_download: async () => { later(300, [{ type: "fprog", label: "Downloading", done: 4000, total: 9000 }]); later(1200, [{ type: "finished", ok: true, quiet: true, send_only: true }]); return { ok: true }; },
     files_upload: async () => { later(300, [{ type: "fprog", label: "Uploading", done: 2000, total: 9000 }]); later(1200, [{ type: "finished", ok: true, quiet: true, send_only: true, files_changed: true }]); return { ok: true }; },
     backup_folders: async () => { await sleep(600); return { folders: [["apps", 8900000], ["apps_data", 120000], ["badusb", 40000], ["infrared", 210000], ["nfc", 88000], ["subghz", 1500000], ["u2f", 2000], ["update", 0]].map(([name, size]) => ({ name, size, files: 3 })) }; },
+    sub_scan: async () => { await sleep(700); return { root: "/ext/subghz", count: 6, files: [
+      { path: "/ext/subghz/Garage_remote.sub", name: "Garage_remote", folder: "(top level)", size: 213, freq_mhz: "433.92 MHz", preset: "AM650 (OOK, 650 kHz)", protocol: "Princeton", type: "fixed", note: "Fixed code: the same signal every time, so a saved copy keeps working as a clone." },
+      { path: "/ext/subghz/Gate.sub", name: "Gate", folder: "(top level)", size: 185, freq_mhz: "433.89 MHz", preset: "AM650 (OOK, 650 kHz)", protocol: "CAME", type: "fixed", note: "Fixed code." },
+      { path: "/ext/subghz/Shutter.sub", name: "Shutter", folder: "(top level)", size: 196, freq_mhz: "433.92 MHz", preset: "AM650 (OOK, 650 kHz)", protocol: "Holtek HT12X", type: "fixed", note: "Fixed code." },
+      { path: "/ext/subghz/Barrier.sub", name: "Barrier", folder: "(top level)", size: 240, freq_mhz: "433.92 MHz", preset: "AM650 (OOK, 650 kHz)", protocol: "KeeLoq", type: "rolling", note: "Rolling code: opens once then desyncs." },
+      { path: "/ext/subghz/Captures/Doorbell.sub", name: "Doorbell", folder: "Captures", size: 5503, freq_mhz: "433.92 MHz", preset: "AM650 (OOK, 650 kHz)", protocol: "RAW", type: "raw", note: "Raw capture." },
+      { path: "/ext/subghz/Captures/Weather_sensor.sub", name: "Weather_sensor", folder: "Captures", size: 44765, freq_mhz: "", preset: "", protocol: "RAW", type: "raw", note: "Large raw capture, not read in full." },
+    ] }; },
+    sub_backup: async (paths) => { await sleep(600); return { ok: true, count: (paths || []).length, path: "C:\\flipper-subghz-20261126" }; },
     backups_list: async () => ({ dir: "C:\\backups", backups: [{ path: "C:\\b.zip", name: "C3rb3rus_2026-11-09_0930", files: 214, bytes: 1960000, created: Date.now() / 1000 - 7200, device: { fw_name: "Momentum dev" } }] }),
     backup_start: async () => { for (let i = 1; i <= 5; i++) later(300 * i, [{ type: "fprog", label: "Backing up", done: i * 400000, total: 2000000 }]);
       later(1900, [{ type: "finished", ok: true, quiet: true, send_only: true, backup_done: { files: 214 } }]); return { ok: true }; },
@@ -2988,6 +2997,52 @@ async function mkLoad() {
   if (r.error) { mkStatus(r.error); return; }
   MK.keys = r.keys; MK.dirty = false; mkRender(); mkStatus(r.exists ? "" : "No user key file yet; saving creates it");
 }
+/* ---------- Sub-GHz library: list saved .sub files, fixed vs rolling, back up to PC ---------- */
+const SUBS = { files: [], sel: new Set(), loaded: false };
+const SUB_TYPE = { fixed: { label: "Fixed", cls: "sw-fixed" }, rolling: { label: "Rolling", cls: "sw-rolling" },
+  raw: { label: "Raw", cls: "sw-raw" }, unknown: { label: "Unknown", cls: "sw-unknown" } };
+async function subsScan() {
+  if (!devReady()) { $("#subsList").innerHTML = `<div class="tool-status">Plug in your Flipper, then Scan.</div>`; $("#subsCount").textContent = ""; return; }
+  $("#subsList").innerHTML = `<div class="tool-status"><span class="spin"></span> Reading your Sub-GHz files…</div>`;
+  $("#subsScan").disabled = true;
+  const r = await api.sub_scan();
+  $("#subsScan").disabled = false;
+  if (r.error) { $("#subsList").innerHTML = `<div class="tool-status">${esc(r.error)}</div>`; return; }
+  SUBS.files = r.files || []; SUBS.sel = new Set(); SUBS.loaded = true;
+  subsRender();
+}
+function subsRender() {
+  const box = $("#subsList");
+  if (!SUBS.files.length) { box.innerHTML = `<div class="tool-status">No .sub files found on the Flipper.</div>`; $("#subsCount").textContent = ""; subsCount(); return; }
+  const groups = {};
+  for (const f of SUBS.files) (groups[f.folder] = groups[f.folder] || []).push(f);
+  box.innerHTML = Object.keys(groups).sort().map((g) => {
+    const rows = groups[g].map((f) => {
+      const t = SUB_TYPE[f.type] || SUB_TYPE.unknown;
+      return `<label class="subs-row" title="${esc(f.note || "")}"><input type="checkbox" data-sub="${esc(f.path)}"${SUBS.sel.has(f.path) ? " checked" : ""}>` +
+        `<span class="subs-name">${esc(f.name)}</span>` +
+        `<span class="subs-meta">${esc(f.freq_mhz || "")}${f.protocol && f.protocol !== "?" ? " · " + esc(f.protocol) : ""}</span>` +
+        `<span class="sw-tag ${t.cls}">${t.label}</span></label>`;
+    }).join("");
+    return `<div class="subs-group"><div class="subs-gh">${esc(g)} <small>${groups[g].length}</small></div>${rows}</div>`;
+  }).join("");
+  $$("#subsList input[data-sub]").forEach((c) => c.onchange = () => { c.checked ? SUBS.sel.add(c.dataset.sub) : SUBS.sel.delete(c.dataset.sub); subsCount(); });
+  subsCount();
+}
+function subsCount() {
+  const fixed = SUBS.files.filter((f) => f.type === "fixed").length, roll = SUBS.files.filter((f) => f.type === "rolling").length;
+  $("#subsCount").textContent = SUBS.files.length ? `${SUBS.files.length} files · ${fixed} fixed · ${roll} rolling · ${SUBS.sel.size} selected` : "";
+  $("#subsBackup").disabled = SUBS.sel.size === 0;
+}
+async function subsBackup() {
+  if (!SUBS.sel.size) return;
+  $("#subsBackup").disabled = true;
+  const r = await api.sub_backup([...SUBS.sel]);
+  $("#subsBackup").disabled = false;
+  if (r.cancelled) return;
+  if (r.error) { toast(r.error); return; }
+  toast(`Backed up ${r.count} file${r.count === 1 ? "" : "s"} to ${String(r.path).split(/[\\/]/).pop()}`);
+}
 /* ---------- NFC: compare two dumps ---------- */
 async function nfcCompare(pathA, a) {
   const files = await api.files_list(pathA.slice(0, pathA.lastIndexOf("/")));
@@ -3676,6 +3731,9 @@ function bind() {
     if (r && r.error) { cliPrint(r.error + "\n", "err"); CLI.follow = false; $("#logFollow").classList.remove("on"); $("#logFollow").lastChild.textContent = "Follow log"; }
   };
   $('.tool[data-tool="mfkeys"]').addEventListener("toggle", (e) => { if (e.target.open && !MK.loaded) { MK.loaded = true; mkLoad(); } });
+  $('.tool[data-tool="subs"]').addEventListener("toggle", (e) => { if (e.target.open && !SUBS.loaded) subsScan(); });
+  $("#subsScan").onclick = subsScan;
+  $("#subsBackup").onclick = subsBackup;
   $("#mkLoad").onclick = mkLoad;
   $("#mkAddBtn").onclick = () => {
     const found = ($("#mkAdd").value.toUpperCase().match(/[0-9A-F]{12}/g) || []).filter((k) => !MK.keys.includes(k));

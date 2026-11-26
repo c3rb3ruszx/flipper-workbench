@@ -294,6 +294,23 @@
                 </div>
               </div>
             </details>
+            <details class="tool" data-tool="subs">
+              <summary><b>Sub-GHz library</b><span>Your saved remotes, gates and recordings, sorted and labelled fixed or rolling</span></summary>
+              <div class="tool-body">
+                <div class="tool-row">
+                  <button class="mini primary" id="subsScan"><i data-icon="refresh"></i>Scan my Flipper</button>
+                  <button class="mini" id="subsBackup" disabled><i data-icon="download"></i>Back up selected to PC</button>
+                  <span class="muted small" id="subsCount"></span>
+                </div>
+                <div class="subs-legend small muted">
+                  <span><i class="sw-dot sw-fixed"></i>Fixed code — a saved copy keeps working</span>
+                  <span><i class="sw-dot sw-rolling"></i>Rolling code — opens once, then desyncs</span>
+                  <span><i class="sw-dot sw-raw"></i>Raw capture</span>
+                </div>
+                <div id="subsList" class="subs-list"></div>
+                <div class="tool-note small">Read-only: this reads and backs up your files, it never transmits and never changes anything on the Flipper. Replaying a signal is done on the Flipper itself, within your local rules.</div>
+              </div>
+            </details>
             <details class="tool" data-tool="irb">
               <summary><b>IR remote builder</b><span>Make one remote from buttons of any remote, test them, save it</span></summary>
               <div class="tool-body">
@@ -693,6 +710,7 @@
               <div class="wd-menu-note" id="wdExportNote"></div>
               <button data-exp="wigle"><b>WiGLE CSV</b><small>upload to WiGLE later, or open in other tools</small></button>
               <button data-exp="kml"><b>KML</b><small>Google Earth</small></button>
+              <button data-exp="kmz"><b>KMZ</b><small>Google Earth, one compact file</small></button>
               <button data-exp="geojson"><b>GeoJSON</b><small>QGIS and other map tools</small></button>
               <button data-exp="csv"><b>CSV</b><small>one row per network, for Excel</small></button>
               <button data-exp="report"><b>Report</b><small>a one-page summary with a map, opens in your browser</small></button>
@@ -706,7 +724,7 @@
             <div class="wd-layers" id="wdLayers">
               <div class="wd-lg"><button data-mode="dots">Dots</button><button data-mode="cluster">Groups</button><button data-mode="heat">Heatmap</button></div>
               <div class="wd-lg"><span>Color</span><button data-color="sec">Security</button><button data-color="sig">Signal</button><button data-color="kind">Type</button></div>
-              <div class="wd-lg"><button id="wdRouteBtn">Route</button><button id="wdFitBtn" title="Zoom to all your logs">Fit</button></div>
+              <div class="wd-lg"><button id="wdRouteBtn">Route</button><button id="wdGapBtn" title="Mark spots along your route where the GPS dropped out">Gaps</button><button id="wdFitBtn" title="Zoom to all your logs">Fit</button></div>
             </div>
             <div class="wd-legend" id="wdLegend"></div>
             <div class="wd-hint" id="wdHomeHint" hidden>Click the map where your home is <button class="mini" id="wdHomeHintCancel">Cancel</button></div>
